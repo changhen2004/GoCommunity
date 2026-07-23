@@ -50,4 +50,5 @@ debug
 
 /docs/*
 !docs/benchmark.md
+!docs/evidence/
 
