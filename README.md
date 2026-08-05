@@ -111,7 +111,9 @@ docker compose up --build
 
 ## 压测结果
 
-环境：本地 Docker Compose 单机；工具：`wrk`。
+环境：本地 Docker Compose 单机；工具：`wrk`（`-t4 -c100 -d60s --latency`）。
+
+### 列表接口（wrk 客户端口径）
 
 ```bash
 wrk -t4 -c100 -d60s --latency "http://localhost:8080/api/articles?page=1&pageSize=10"
@@ -124,8 +126,23 @@ wrk -t4 -c100 -d60s --latency "http://localhost:8080/api/articles?page=1&pageSiz
 | 平均延迟 | 8.31ms |
 | P95 延迟 | 20ms |
 
-> 详细记录与复现说明见 [docs/benchmark.md](docs/benchmark.md)。压测数据以该文档为准，勿在简历 / README 中夸大。
+> 详细记录与复现说明见 [docs/benchmark.md](docs/benchmark.md)。
 
+### 热点详情接口（服务端 Prometheus 口径）
+
+场景：缓存预热后的热点资源详情 `GET /api/articles/1`，读链路命中 Redis 详情缓存，MySQL 仅承载回源写入。
+
+| 指标 | 结果 |
+|---|---|
+| QPS | 22721.76（约 2.2 万） |
+| P50 / P95 / P99 延迟 | 2.64ms / 5.29ms / 9.81ms |
+| Redis 命中率 | 99.64%（keyspace hits / (hits + misses)） |
+| MySQL QPS | 约 10，慢查询 0 |
+| 5xx 错误率 | 0% |
+
+> 口径说明：上表为服务端 Prometheus 口径；wrk 客户端侧 P90 为 295.03ms、P99 为 1.16s，明显高于服务端口径，差异主要来自压测端连接排队与调度开销。两个口径不可混用，简历 / 文档引用时须标注口径。原始记录见 [docs/evidence/hot-detail-benchmark-20260723-180223.md](docs/evidence/hot-detail-benchmark-20260723-180223.md)。
+
+> 压测数据以仓库文档为准
 ## 与 OncallAgent 联动
 
 项目提供“真实业务监控 → 告警 → 排障”的闭环数据源：
