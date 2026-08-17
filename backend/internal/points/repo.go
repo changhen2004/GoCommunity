@@ -294,33 +294,8 @@ func (r *Repo) CreateCheckInAndAwardWithKey(userID uint, date string, amount uin
 }
 
 func (r *Repo) AwardPoints(userID uint, amount uint, source, referenceType string, referenceID uint, description string) (uint, error) {
-	var balance uint
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		var user internalAuth.User
-		if err := tx.First(&user, userID).Error; err != nil {
-			return err
-		}
-
-		balance = user.Points + amount
-		if err := tx.Model(&internalAuth.User{}).
-			Where("id = ?", userID).
-			Update("points", balance).Error; err != nil {
-			return err
-		}
-
-		return tx.Create(&PointLedger{
-			UserID:        userID,
-			Change:        int(amount),
-			BalanceAfter:  balance,
-			Direction:     "income",
-			Source:        source,
-			ReferenceType: referenceType,
-			ReferenceID:   referenceID,
-			Description:   description,
-		}).Error
-	})
-	r.DeleteSummaryCache(context.Background(), userID)
-	return balance, err
+	operationKey := fmt.Sprintf("%s:%d:%s:%d", source, userID, referenceType, referenceID)
+	return r.AwardPointsWithKey(userID, amount, source, referenceType, referenceID, description, operationKey)
 }
 
 func (r *Repo) CreateCheckInAndAward(userID uint, date string, amount uint, description string) (uint, error) {
