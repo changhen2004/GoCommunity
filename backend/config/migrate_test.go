@@ -48,7 +48,7 @@ func TestMigrateEnforcesUniqueUsername(t *testing.T) {
 	}
 }
 
-func TestMigrateAddsArticleOwnershipAndStatsFields(t *testing.T) {
+func TestMigrateAddsArticleOwnershipStatsAndPointsFields(t *testing.T) {
 	db := openTestDB(t)
 
 	if err := Migrate(db); err != nil {
@@ -119,6 +119,9 @@ func TestMigrateAddsArticleOwnershipAndStatsFields(t *testing.T) {
 	if !db.Migrator().HasColumn(&points.PointLedger{}, "operation_key") {
 		t.Fatal("expected operation_key column to exist")
 	}
+	if !db.Migrator().HasIndex(&points.PointOperation{}, "idx_point_operations_user_key") {
+		t.Fatal("expected point_operations unique index to exist")
+	}
 	if !db.Migrator().HasTable(&points.UserCheckIn{}) {
 		t.Fatal("expected user_check_ins table to exist")
 	}
@@ -175,5 +178,66 @@ func TestMigrateAddsArticleOwnershipAndStatsFields(t *testing.T) {
 	}
 	if saved.RequiredPoints != 12 {
 		t.Fatalf("expected required points 12, got %d", saved.RequiredPoints)
+	}
+}
+
+func TestMigrateKeepsPointLedgerNullOperationKeyAndPointOperationUniqueConstraint(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate returned error: %v", err)
+	}
+
+	ledger := points.PointLedger{
+		UserID:        7,
+		Change:        5,
+		BalanceAfter:  15,
+		Direction:     "income",
+		Source:        "daily_check_in",
+		ReferenceType: "check_in",
+		Description:   "daily check-in reward",
+	}
+	if err := db.Create(&ledger).Error; err != nil {
+		t.Fatalf("create point ledger: %v", err)
+	}
+
+	if ledger.OperationKey != nil {
+		t.Fatalf("expected historical ledger operation key to remain nil, got %v", ledger.OperationKey)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("second Migrate returned error: %v", err)
+	}
+
+	var saved points.PointLedger
+	if err := db.First(&saved, ledger.ID).Error; err != nil {
+		t.Fatalf("reload point ledger: %v", err)
+	}
+	if saved.OperationKey != nil {
+		t.Fatalf("expected persisted nil operation key after re-migrate, got %v", saved.OperationKey)
+	}
+
+	first := points.PointOperation{
+		UserID:       7,
+		OperationKey: "check_in:7:2026-08-17",
+		Change:       5,
+		BalanceAfter: 15,
+	}
+	if err := db.Create(&first).Error; err != nil {
+		t.Fatalf("create first point operation: %v", err)
+	}
+
+	second := points.PointOperation{
+		UserID:       7,
+		OperationKey: "check_in:7:2026-08-17",
+		Change:       5,
+		BalanceAfter: 20,
+	}
+	err := db.Create(&second).Error
+	if err == nil {
+		t.Fatal("expected duplicate point operation insert to fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "unique") {
+		t.Fatalf("expected unique constraint error for point operation, got: %v", err)
 	}
 }
