@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	internalAuth "resource_community_go/internal/auth"
 	"resource_community_go/internal/cachekey"
@@ -47,7 +49,8 @@ func (testArticleUnlock) TableName() string {
 func setupPointsTestHandler(t *testing.T, withRedis bool) (*Handler, *gorm.DB) {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	dbName := fmt.Sprintf("points_handler_test_%d", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open("file:"+dbName+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
@@ -56,6 +59,7 @@ func setupPointsTestHandler(t *testing.T, withRedis bool) (*Handler, *gorm.DB) {
 		&testArticle{},
 		&testArticleUnlock{},
 		&PointLedger{},
+		&PointOperation{},
 		&UserCheckIn{},
 		&UserPrivilege{},
 	); err != nil {
@@ -147,8 +151,17 @@ func TestPointsFlow(t *testing.T) {
 		repeatReq := httptest.NewRequest(http.MethodPost, "/api/me/check-in", nil)
 		repeatResp := httptest.NewRecorder()
 		router.ServeHTTP(repeatResp, repeatReq)
-		if repeatResp.Code != http.StatusConflict {
-			t.Fatalf("expected repeat check-in status 409, got %d", repeatResp.Code)
+		if repeatResp.Code != http.StatusOK {
+			t.Fatalf("expected repeat check-in status 200, got %d", repeatResp.Code)
+		}
+
+		var repeatEnvelope map[string]any
+		if err := json.Unmarshal(repeatResp.Body.Bytes(), &repeatEnvelope); err != nil {
+			t.Fatalf("unmarshal repeat check-in: %v", err)
+		}
+		repeatData := repeatEnvelope["data"].(map[string]any)
+		if repeatData["balance"] != float64(45) {
+			t.Fatalf("expected repeat check-in to return balance 45, got %v", repeatData["balance"])
 		}
 
 		var userAfterRepeatCheckIn internalAuth.User

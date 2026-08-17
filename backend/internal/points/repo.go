@@ -205,6 +205,72 @@ func (r *Repo) AwardPointsWithKey(userID uint, amount uint, source, referenceTyp
 	return balance, err
 }
 
+func (r *Repo) CreateCheckInAndAwardWithKey(userID uint, date string, amount uint, description, operationKey string) (uint, error) {
+	var balance uint
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		err := createPointOperation(tx, PointOperation{
+			UserID:       userID,
+			OperationKey: operationKey,
+			Change:       int(amount),
+		})
+		if errors.Is(err, errPointOperationExists) {
+			operation, getErr := getPointOperation(tx, userID, operationKey)
+			if getErr != nil {
+				return getErr
+			}
+			balance = operation.BalanceAfter
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		if err := tx.Create(&UserCheckIn{
+			UserID:      userID,
+			CheckInDate: date,
+		}).Error; err != nil {
+			return err
+		}
+
+		result := tx.Model(&internalAuth.User{}).
+			Where("id = ?", userID).
+			UpdateColumn("points", gorm.Expr("points + ?", amount))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+
+		updatedBalance, err := getUserBalance(tx, userID)
+		if err != nil {
+			return err
+		}
+		balance = updatedBalance
+
+		if err := tx.Create(&PointLedger{
+			UserID:        userID,
+			OperationKey:  &operationKey,
+			Change:        int(amount),
+			BalanceAfter:  balance,
+			Direction:     "income",
+			Source:        "daily_check_in",
+			ReferenceType: "check_in",
+			Description:   description,
+		}).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&PointOperation{}).
+			Where("user_id = ? AND operation_key = ?", userID, operationKey).
+			Update("balance_after", balance).Error
+	})
+	if err == nil {
+		r.DeleteSummaryCache(context.Background(), userID)
+	}
+	return balance, err
+}
+
 func (r *Repo) AwardPoints(userID uint, amount uint, source, referenceType string, referenceID uint, description string) (uint, error) {
 	var balance uint
 	err := r.db.Transaction(func(tx *gorm.DB) error {
