@@ -530,3 +530,110 @@ func assertUserPoints(t *testing.T, db *gorm.DB, userID, expected uint) {
 		t.Fatalf("expected user points %d, got %d", expected, user.Points)
 	}
 }
+
+func TestPointsConcurrencyLedgerInvariant(t *testing.T) {
+	db := setupPointsRepoTestDB(t)
+	service := NewService(NewRepo(db, nil))
+	const initialPoints uint = 1000
+	user := internalAuth.User{Username: "ledger_invariant_user", Password: "secret123", Points: initialPoints}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	articles := make([]concurrentTestArticle, 34)
+	for i := range articles {
+		articles[i] = concurrentTestArticle{
+			AuthorID:       user.ID + 1,
+			Title:          fmt.Sprintf("Invariant Paid Article %d", i),
+			Content:        "Body",
+			Preview:        "Preview",
+			Status:         "published",
+			RequiredPoints: 10,
+		}
+		if err := db.Create(&articles[i]).Error; err != nil {
+			t.Fatalf("create article %d: %v", i, err)
+		}
+	}
+
+	calls := make([]func() error, 0, 100)
+	calls = append(calls, func() error {
+		_, err := service.CheckIn(user.ID)
+		return err
+	})
+	for i := 0; i < 32; i++ {
+		articleID := uint(i + 1)
+		calls = append(calls, func() error {
+			return service.AwardPublishResource(user.ID, articleID)
+		})
+	}
+	for i := 0; i < 32; i++ {
+		commentID := uint(i + 1)
+		calls = append(calls, func() error {
+			return service.AwardQualityInteraction(user.ID, commentID)
+		})
+	}
+	for i := range articles {
+		articleID := articles[i].ID
+		calls = append(calls, func() error {
+			_, err := service.UnlockArticle(user.ID, fmt.Sprintf("%d", articleID))
+			return err
+		})
+	}
+	calls = append(calls, func() error {
+		_, err := service.RedeemPrivilege(user.ID, RedeemPrivilegeRequest{PrivilegeKey: "feature_article"})
+		return err
+	})
+
+	if len(calls) != 100 {
+		t.Fatalf("expected 100 concurrent calls, got %d", len(calls))
+	}
+
+	var next atomic.Uint64
+	results := runConcurrentErrorCalls(t, len(calls), func() error {
+		index := int(next.Add(1) - 1)
+		return calls[index]()
+	})
+	for i, err := range results {
+		if err != nil {
+			t.Fatalf("goroutine %d returned error: %v", i, err)
+		}
+	}
+
+	assertLedgerMatchesBalance(t, db, user.ID, initialPoints)
+
+	var operationCount int64
+	if err := db.Model(&PointOperation{}).Where("user_id = ?", user.ID).Count(&operationCount).Error; err != nil {
+		t.Fatalf("count point operations: %v", err)
+	}
+	if operationCount != int64(len(calls)) {
+		t.Fatalf("expected %d point operations, got %d", len(calls), operationCount)
+	}
+
+	var ledgerCount int64
+	if err := db.Model(&PointLedger{}).Where("user_id = ?", user.ID).Count(&ledgerCount).Error; err != nil {
+		t.Fatalf("count point ledgers: %v", err)
+	}
+	if ledgerCount != int64(len(calls)) {
+		t.Fatalf("expected %d point ledgers, got %d", len(calls), ledgerCount)
+	}
+}
+
+func assertLedgerMatchesBalance(t *testing.T, db *gorm.DB, userID, initial uint) {
+	t.Helper()
+
+	var user internalAuth.User
+	if err := db.First(&user, userID).Error; err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+
+	var total int64
+	if err := db.Model(&PointLedger{}).
+		Where("user_id = ?", userID).
+		Select("COALESCE(SUM(change), 0)").
+		Scan(&total).Error; err != nil {
+		t.Fatalf("sum point ledger changes: %v", err)
+	}
+	if int64(initial)+total != int64(user.Points) {
+		t.Fatalf("balance %d != initial %d + ledger total %d", user.Points, initial, total)
+	}
+}
