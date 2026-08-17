@@ -71,7 +71,12 @@ func (h *Handler) CreateComment(ctx *gin.Context) {
 func (h *Handler) GetComments(ctx *gin.Context) {
 	resp, err := h.service.List(ctx.Param("id"))
 	if err != nil {
-		writeError(ctx, http.StatusInternalServerError, 10005, err.Error(), "INTERNAL_ERROR")
+		switch {
+		case errors.Is(err, ErrArticleNotFound):
+			writeError(ctx, http.StatusNotFound, 10003, "Article not found", "ARTICLE_NOT_FOUND")
+		default:
+			writeError(ctx, http.StatusInternalServerError, 10005, err.Error(), "INTERNAL_ERROR")
+		}
 		return
 	}
 

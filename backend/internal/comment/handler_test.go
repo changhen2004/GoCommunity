@@ -60,6 +60,7 @@ func TestCommentLifecycle(t *testing.T) {
 		Title:    "Go Community",
 		Content:  "Body",
 		Preview:  "Preview",
+		Status:   "published",
 		IsFree:   true,
 	}
 	if err := db.Create(&article).Error; err != nil {
@@ -202,6 +203,59 @@ func TestCreateCommentRejectsTooLongContent(t *testing.T) {
 	}
 }
 
+func TestDraftArticleCommentsAreNotVisible(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupCommentTestHandler(t, false)
+
+	author := internalAuth.User{Username: "draft-comment-author", Password: "secret123"}
+	if err := db.Create(&author).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	draft := internalArticle.Article{
+		AuthorID: author.ID,
+		Title:    "Draft Comment Target",
+		Content:  "Body",
+		Preview:  "Preview",
+		Status:   "draft",
+		IsFree:   true,
+	}
+	if err := db.Create(&draft).Error; err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/api/articles/:id/comments", handler.GetComments)
+	router.POST("/api/articles/:id/comments", func(ctx *gin.Context) {
+		ctx.Set("userID", author.ID)
+		ctx.Set("username", author.Username)
+		handler.CreateComment(ctx)
+	})
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/articles/"+strconv.FormatUint(uint64(draft.ID), 10)+"/comments", nil)
+	listResp := httptest.NewRecorder()
+	router.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusNotFound {
+		t.Fatalf("expected draft comments list to return 404, got %d", listResp.Code)
+	}
+
+	payload, _ := json.Marshal(map[string]any{"content": "comment on draft"})
+	createReq := httptest.NewRequest(http.MethodPost, "/api/articles/"+strconv.FormatUint(uint64(draft.ID), 10)+"/comments", bytes.NewReader(payload))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp := httptest.NewRecorder()
+	router.ServeHTTP(createResp, createReq)
+	if createResp.Code != http.StatusNotFound {
+		t.Fatalf("expected draft comment create to return 404, got %d", createResp.Code)
+	}
+
+	var reloaded internalArticle.Article
+	if err := db.First(&reloaded, draft.ID).Error; err != nil {
+		t.Fatalf("reload draft: %v", err)
+	}
+	if reloaded.CommentCount != 0 {
+		t.Fatalf("expected draft comment count to remain 0, got %d", reloaded.CommentCount)
+	}
+}
+
 func TestCreateCommentUpdatesHotRanking(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db := setupCommentTestHandler(t, true)
@@ -215,6 +269,7 @@ func TestCreateCommentUpdatesHotRanking(t *testing.T) {
 		Title:    "Hot Article",
 		Content:  "Body",
 		Preview:  "Preview",
+		Status:   "published",
 		IsFree:   true,
 	}
 	if err := db.Create(&article).Error; err != nil {

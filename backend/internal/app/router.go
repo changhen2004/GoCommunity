@@ -1,6 +1,9 @@
 package app
 
 import (
+	"net/http"
+	"path"
+	"path/filepath"
 	internalArticle "resource_community_go/internal/article"
 	"resource_community_go/internal/asyncjob"
 	internalAuth "resource_community_go/internal/auth"
@@ -9,6 +12,7 @@ import (
 	internalMedia "resource_community_go/internal/media"
 	internalPoints "resource_community_go/internal/points"
 	internalSocial "resource_community_go/internal/social"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -95,8 +99,6 @@ func SetUpRouter(deps Dependencies) *gin.Engine {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
-	r.Static("/uploads", deps.UploadDir)
-
 	auth := r.Group("/api/auth")
 	{
 		auth.POST("/login", RateLimitMiddleware(deps.RedisDB, loginRateLimitRule), authHandler.Login)
@@ -108,7 +110,7 @@ func SetUpRouter(deps Dependencies) *gin.Engine {
 	{
 		publicAPI.GET("/articles", articleHandler.GetArticles)
 		publicAPI.GET("/articles/hot", articleHandler.GetHotArticles)
-		publicAPI.GET("/articles/:id", articleHandler.GetArticleByID)
+		publicAPI.GET("/articles/:id", OptionalAuthMiddleware(authService), articleHandler.GetArticleByID)
 		publicAPI.GET("/articles/:id/like", articleHandler.GetArticleLikes)
 		publicAPI.GET("/articles/:id/comments", commentHandler.GetComments)
 	}
@@ -136,5 +138,27 @@ func SetUpRouter(deps Dependencies) *gin.Engine {
 		protectedAPI.POST("/me/points/redeem", pointsHandler.RedeemPrivilege)
 	}
 	publicAPI.GET("/authors/:id/social-status", OptionalAuthMiddleware(authService), socialHandler.GetAuthorSocialStatus)
+	r.Static("/uploads/covers", filepath.Join(deps.UploadDir, "covers"))
+	r.GET("/uploads/content/*filepath", OptionalAuthMiddleware(authService), func(ctx *gin.Context) {
+		serveProtectedContentImage(ctx, articleService, deps.UploadDir)
+	})
 	return r
+}
+
+func serveProtectedContentImage(ctx *gin.Context, articleService *internalArticle.Service, uploadDir string) {
+	cleanPath := path.Clean("/" + ctx.Param("filepath"))
+	if cleanPath == "/" {
+		ctx.Status(http.StatusNotFound)
+		return
+	}
+
+	publicURL := "/uploads/content" + cleanPath
+	allowed, err := articleService.CanAccessContentImage(publicURL, ctx.GetUint("userID"))
+	if err != nil || !allowed {
+		ctx.Status(http.StatusNotFound)
+		return
+	}
+
+	localPath := filepath.Join(uploadDir, "content", filepath.FromSlash(strings.TrimPrefix(cleanPath, "/")))
+	ctx.File(localPath)
 }

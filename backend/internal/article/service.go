@@ -90,22 +90,6 @@ func (s *Service) Create(ctx context.Context, req CreateArticleRequest) (Article
 	if err := s.repo.Create(article); err != nil {
 		return ArticleResponse{}, err
 	}
-	if err := s.publisher.Publish(ctx, asyncjob.Job{
-		Type: asyncjob.TypeArticlePublished,
-		Payload: map[string]uint{
-			"userID":    article.AuthorID,
-			"articleID": article.ID,
-		},
-	}); err != nil {
-		if err := s.SetInitialHeat(ctx, article.ID); err != nil {
-			return ArticleResponse{}, err
-		}
-		if s.pointsService != nil {
-			if err := s.pointsService.AwardPublishResource(article.AuthorID, article.ID); err != nil {
-				return ArticleResponse{}, err
-			}
-		}
-	}
 	s.repo.DeleteArticlesCacheByPrefix(ctx, cachekey.ArticleListPrefix)
 	s.repo.DeleteArticlesCacheByPrefix(ctx, cachekey.ArticleHotPrefix)
 	s.repo.DeleteArticlesCacheByPrefix(ctx, cachekey.ArticleFollowingPrefix)
@@ -186,6 +170,23 @@ func (s *Service) FindByID(id string) (ArticleResponse, error) {
 	}
 
 	return toArticleResponse(*article), nil
+}
+
+func (s *Service) CanAccessContentImage(url string, currentUserID uint) (bool, error) {
+	article, err := s.repo.FindByContentImageURL(url)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, ErrArticleNotFound
+		}
+		return false, err
+	}
+	if article.Status == "draft" {
+		return article.AuthorID == currentUserID, nil
+	}
+	if article.Status != "published" {
+		return false, nil
+	}
+	return s.resolveUnlockStatus(*article, currentUserID)
 }
 
 func (s *Service) GetDetail(id string, currentUserID uint) (ArticleDetailResponse, error) {
@@ -274,6 +275,12 @@ func (s *Service) publishArticleView(ctx context.Context, articleID uint) (bool,
 }
 
 func (s *Service) articleDetailPayloadToResponse(ctx context.Context, payload articleDetailCachePayload, currentUserID uint) (ArticleDetailResponse, error) {
+	if payload.Status == "draft" {
+		if payload.Author.ID != currentUserID {
+			return ArticleDetailResponse{}, ErrArticleNotFound
+		}
+		return payload.toResponse(true), nil
+	}
 	if recordedSynchronously, recordErr := s.publishArticleView(ctx, payload.ID); recordErr != nil {
 		return ArticleDetailResponse{}, recordErr
 	} else if recordedSynchronously {
@@ -318,6 +325,12 @@ func (s *Service) doArticleDetailCacheFill(cacheKey string, fill func() (article
 }
 
 func (s *Service) Like(ctx context.Context, articleID string) (LikeActionResponse, error) {
+	if _, err := s.repo.FindPublishedByID(articleID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return LikeActionResponse{}, ErrArticleNotFound
+		}
+		return LikeActionResponse{}, err
+	}
 	likes, err := s.repo.IncrementLikeRedisOnly(ctx, articleID)
 	if err != nil {
 		return LikeActionResponse{}, err
@@ -346,6 +359,12 @@ func (s *Service) Like(ctx context.Context, articleID string) (LikeActionRespons
 }
 
 func (s *Service) GetLikes(ctx context.Context, articleID string) (LikeResponse, error) {
+	if _, err := s.repo.FindPublishedByID(articleID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return LikeResponse{}, ErrArticleNotFound
+		}
+		return LikeResponse{}, err
+	}
 	likes, err := s.repo.GetLikeCount(ctx, articleID)
 	if err != nil {
 		return LikeResponse{}, err
@@ -514,13 +533,19 @@ func newArticleDetailCachePayload(detail ArticleDetailResponse) articleDetailCac
 }
 
 func (p articleDetailCachePayload) toResponse(isUnlocked bool) ArticleDetailResponse {
+	content := p.Content
+	contentImages := p.ContentImages
+	if !isUnlocked {
+		content = ""
+		contentImages = []string{}
+	}
 	return ArticleDetailResponse{
 		ID:             p.ID,
 		Title:          p.Title,
-		Content:        p.Content,
+		Content:        content,
 		Preview:        p.Preview,
 		CoverURL:       p.CoverURL,
-		ContentImages:  p.ContentImages,
+		ContentImages:  contentImages,
 		Tags:           p.Tags,
 		Status:         p.Status,
 		Author:         p.Author,

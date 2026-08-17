@@ -64,6 +64,7 @@ func TestFavoriteLifecycle(t *testing.T) {
 		Content:        "Body",
 		Preview:        "Preview",
 		Tags:           "go,resource",
+		Status:         "published",
 		IsFree:         false,
 		RequiredPoints: 10,
 	}
@@ -125,6 +126,53 @@ func TestFavoriteLifecycle(t *testing.T) {
 	}
 	if saved.FavoriteCount != 0 {
 		t.Fatalf("expected favorite count 0, got %d", saved.FavoriteCount)
+	}
+}
+
+func TestDraftArticleCannotBeFavorited(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupFavoriteTestHandler(t, false)
+
+	author := internalAuth.User{Username: "draft-favorite-author", Password: "secret123"}
+	user := internalAuth.User{Username: "draft-favorite-reader", Password: "secret123"}
+	if err := db.Create(&author).Error; err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create reader: %v", err)
+	}
+
+	draft := internalArticle.Article{
+		AuthorID: author.ID,
+		Title:    "Draft Favorite Target",
+		Content:  "Body",
+		Preview:  "Preview",
+		Status:   "draft",
+		IsFree:   true,
+	}
+	if err := db.Create(&draft).Error; err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	router := gin.New()
+	router.POST("/api/articles/:id/favorite", func(ctx *gin.Context) {
+		ctx.Set("userID", user.ID)
+		handler.CreateFavorite(ctx)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/articles/"+strconv.FormatUint(uint64(draft.ID), 10)+"/favorite", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected draft favorite to return 404, got %d", resp.Code)
+	}
+
+	var reloaded internalArticle.Article
+	if err := db.First(&reloaded, draft.ID).Error; err != nil {
+		t.Fatalf("reload draft: %v", err)
+	}
+	if reloaded.FavoriteCount != 0 {
+		t.Fatalf("expected draft favorite count to remain 0, got %d", reloaded.FavoriteCount)
 	}
 }
 

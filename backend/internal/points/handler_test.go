@@ -25,6 +25,7 @@ type testArticle struct {
 	Title          string
 	Content        string
 	Preview        string
+	Status         string
 	IsFree         bool
 	RequiredPoints uint
 }
@@ -89,6 +90,7 @@ func TestPointsFlow(t *testing.T) {
 		Title:          "Paid Resource",
 		Content:        "Body",
 		Preview:        "Preview",
+		Status:         "published",
 		IsFree:         false,
 		RequiredPoints: 20,
 	}
@@ -252,6 +254,58 @@ func TestPointsFlow(t *testing.T) {
 			t.Fatalf("expected status 200, got %d", successResp.Code)
 		}
 	})
+}
+
+func TestDraftArticleCannotBeUnlocked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupPointsTestHandler(t, false)
+
+	user := internalAuth.User{Username: "draft_unlock_user", Password: "secret123", Points: 40}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	draft := testArticle{
+		AuthorID:       99,
+		Title:          "Draft Paid Resource",
+		Content:        "Body",
+		Preview:        "Preview",
+		Status:         "draft",
+		IsFree:         false,
+		RequiredPoints: 20,
+	}
+	if err := db.Create(&draft).Error; err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	router := gin.New()
+	router.POST("/api/articles/:id/unlock", func(ctx *gin.Context) {
+		ctx.Set("userID", user.ID)
+		handler.UnlockArticle(ctx)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/articles/"+strconv.FormatUint(uint64(draft.ID), 10)+"/unlock", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected draft unlock to return 404, got %d", resp.Code)
+	}
+
+	var reloaded internalAuth.User
+	if err := db.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if reloaded.Points != 40 {
+		t.Fatalf("expected draft unlock to keep balance 40, got %d", reloaded.Points)
+	}
+
+	var unlockCount int64
+	if err := db.Table("article_unlocks").Where("article_id = ? AND user_id = ?", draft.ID, user.ID).Count(&unlockCount).Error; err != nil {
+		t.Fatalf("count unlock records: %v", err)
+	}
+	if unlockCount != 0 {
+		t.Fatalf("expected no draft unlock record, got %d", unlockCount)
+	}
 }
 
 func TestPointsSummaryCacheHitAndInvalidation(t *testing.T) {

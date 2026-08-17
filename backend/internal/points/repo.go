@@ -19,6 +19,7 @@ type Repo struct {
 type articleRecord struct {
 	ID             uint
 	AuthorID       uint
+	Status         string
 	IsFree         bool
 	RequiredPoints uint
 }
@@ -265,8 +266,8 @@ func (r *Repo) RedeemPrivilege(userID uint, privilegeKey string, cost uint) (uin
 func (r *Repo) FindArticleByID(articleID uint) (*articleRecord, error) {
 	var article articleRecord
 	if err := r.db.Table("articles").
-		Select("id, author_id, is_free, required_points").
-		Where("id = ?", articleID).
+		Select("id, author_id, status, is_free, required_points").
+		Where("id = ? AND status = ?", articleID, "published").
 		Take(&article).Error; err != nil {
 		return nil, err
 	}

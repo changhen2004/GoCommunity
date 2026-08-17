@@ -36,10 +36,8 @@ type ArticleResponse struct {
 	ID             uint      `json:"id"`
 	AuthorID       uint      `json:"authorId"`
 	Title          string    `json:"title"`
-	Content        string    `json:"content"`
 	Preview        string    `json:"preview"`
 	CoverURL       string    `json:"coverUrl"`
-	ContentImages  []string  `json:"contentImages"`
 	Tags           []string  `json:"tags"`
 	Status         string    `json:"status"`
 	ViewCount      uint      `json:"viewCount"`
@@ -107,10 +105,8 @@ func toArticleResponse(article Article) ArticleResponse {
 		ID:             article.ID,
 		AuthorID:       article.AuthorID,
 		Title:          article.Title,
-		Content:        article.Content,
 		Preview:        article.Preview,
 		CoverURL:       article.CoverURL,
-		ContentImages:  splitContentImages(article.ContentImages),
 		Tags:           splitTags(article.Tags),
 		Status:         article.Status,
 		ViewCount:      article.ViewCount,

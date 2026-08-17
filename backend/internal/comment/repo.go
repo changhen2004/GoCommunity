@@ -16,7 +16,7 @@ func NewRepo(db *gorm.DB) *Repo {
 
 func (r *Repo) ArticleExists(articleID uint) (bool, error) {
 	var count int64
-	if err := r.db.Table("articles").Where("id = ?", articleID).Count(&count).Error; err != nil {
+	if err := r.db.Table("articles").Where("id = ? AND status = ?", articleID, "published").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil
@@ -91,6 +91,7 @@ func (r *Repo) ListByArticleID(articleID uint) ([]CommentResponse, error) {
 				"comments.created_at AS comment_created_at, comments.updated_at AS comment_updated_at, "+
 				"users.id AS author_id, users.username AS author_username",
 		).
+		Joins("JOIN articles ON articles.id = comments.article_id AND articles.status = ?", "published").
 		Joins("LEFT JOIN users ON users.id = comments.user_id").
 		Where("comments.article_id = ?", articleID).
 		Order("comments.created_at ASC").

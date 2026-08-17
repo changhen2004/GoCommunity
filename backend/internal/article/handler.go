@@ -4,11 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"resource_community_go/utils"
 )
 
 type Handler struct {
@@ -123,7 +121,7 @@ func (h *Handler) GetFollowingArticles(ctx *gin.Context) {
 }
 
 func (h *Handler) GetArticleByID(ctx *gin.Context) {
-	resp, err := h.service.GetDetail(ctx.Param("id"), currentUserIDFromRequest(ctx))
+	resp, err := h.service.GetDetail(ctx.Param("id"), userIDFromGinContext(ctx))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):
@@ -162,24 +160,6 @@ func (h *Handler) GetArticleLikes(ctx *gin.Context) {
 		return
 	}
 	writeSuccess(ctx, http.StatusOK, resp)
-}
-
-func currentUserIDFromRequest(ctx *gin.Context) uint {
-	authHeader := ctx.GetHeader("Authorization")
-	if authHeader == "" {
-		return 0
-	}
-
-	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.TrimSpace(parts[1]) == "" {
-		return 0
-	}
-
-	claims, err := utils.ParseAccessToken(strings.TrimSpace(parts[1]))
-	if err != nil {
-		return 0
-	}
-	return claims.UserID
 }
 
 func userIDFromGinContext(ctx *gin.Context) uint {

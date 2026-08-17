@@ -185,3 +185,45 @@ func TestServiceGetDetailPublishesViewEventOnCacheHit(t *testing.T) {
 		t.Fatalf("expected cached detail request to publish one view event, got %d", got)
 	}
 }
+
+func TestServiceGetDetailDoesNotRecordDraftViews(t *testing.T) {
+	db, redisDB := newArticleDetailCacheTestStore(t)
+	author := auth.User{Username: "draft-author", Password: "hashed-password"}
+	if err := db.Create(&author).Error; err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+	draft := Article{
+		AuthorID: author.ID,
+		Title:    "Draft",
+		Content:  "draft content",
+		Preview:  "draft preview",
+		Status:   "draft",
+		IsFree:   true,
+	}
+	if err := db.Create(&draft).Error; err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	publisher := &recordingArticleDetailPublisher{}
+	service := NewService(NewRepo(db, redisDB), publisher, nil)
+
+	articleID := strconv.FormatUint(uint64(draft.ID), 10)
+	resp, err := service.GetDetail(articleID, author.ID)
+	if err != nil {
+		t.Fatalf("get author draft detail: %v", err)
+	}
+	if resp.Content != "draft content" {
+		t.Fatalf("expected author to receive draft content, got %q", resp.Content)
+	}
+	if got := publisher.count(asyncjob.TypeArticleViewed); got != 0 {
+		t.Fatalf("expected draft detail not to publish view event, got %d", got)
+	}
+
+	var reloaded Article
+	if err := db.First(&reloaded, draft.ID).Error; err != nil {
+		t.Fatalf("reload draft: %v", err)
+	}
+	if reloaded.ViewCount != 0 {
+		t.Fatalf("expected draft view count to remain 0, got %d", reloaded.ViewCount)
+	}
+}

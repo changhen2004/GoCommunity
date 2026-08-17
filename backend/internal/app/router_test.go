@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -509,6 +511,175 @@ func TestLogoutRevokesExistingAccessToken(t *testing.T) {
 	if afterLogoutResp.Code != http.StatusUnauthorized {
 		t.Fatalf("expected protected route after logout to return 401, got %d", afterLogoutResp.Code)
 	}
+}
+
+func TestLoggedOutTokenCannotUnlockPublicPaidDetail(t *testing.T) {
+	deps := setupRouterTestEnv(t)
+
+	reader := internalAuth.User{Username: "paid-reader", Password: "secret123", Points: 100}
+	author := internalAuth.User{Username: "paid-author", Password: "secret123", Points: 0}
+	if err := deps.DB.Create(&reader).Error; err != nil {
+		t.Fatalf("seed reader: %v", err)
+	}
+	if err := deps.DB.Create(&author).Error; err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+
+	article := internalArticle.Article{
+		AuthorID:       author.ID,
+		Title:          "Paid Detail",
+		Content:        "Paid full content",
+		Preview:        "Paid preview",
+		ContentImages:  "/uploads/content/private-1.png,/uploads/content/private-2.png",
+		Status:         "published",
+		IsFree:         false,
+		RequiredPoints: 20,
+	}
+	if err := deps.DB.Create(&article).Error; err != nil {
+		t.Fatalf("seed paid article: %v", err)
+	}
+	if err := deps.DB.Create(&internalArticle.ArticleUnlock{ArticleID: article.ID, UserID: reader.ID}).Error; err != nil {
+		t.Fatalf("seed unlock: %v", err)
+	}
+
+	token, err := utils.GenerateAccessToken(reader.ID, reader.Username, 0)
+	if err != nil {
+		t.Fatalf("generate access token: %v", err)
+	}
+
+	r := SetUpRouter(deps)
+	detailPath := "/api/articles/" + strconv.FormatUint(uint64(article.ID), 10)
+
+	beforeReq := httptest.NewRequest(http.MethodGet, detailPath, nil)
+	beforeReq.Header.Set("Authorization", "Bearer "+token)
+	beforeResp := httptest.NewRecorder()
+	r.ServeHTTP(beforeResp, beforeReq)
+	if beforeResp.Code != http.StatusOK {
+		t.Fatalf("expected detail before logout to return 200, got %d", beforeResp.Code)
+	}
+	beforeData := decodeRouterEnvelopeData(t, beforeResp)
+	if beforeData["content"] != "Paid full content" {
+		t.Fatalf("expected unlocked token to receive paid content, got %v", beforeData["content"])
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutReq.Header.Set("Authorization", "Bearer "+token)
+	logoutResp := httptest.NewRecorder()
+	r.ServeHTTP(logoutResp, logoutReq)
+	if logoutResp.Code != http.StatusOK {
+		t.Fatalf("expected logout status 200, got %d", logoutResp.Code)
+	}
+
+	afterReq := httptest.NewRequest(http.MethodGet, detailPath, nil)
+	afterReq.Header.Set("Authorization", "Bearer "+token)
+	afterResp := httptest.NewRecorder()
+	r.ServeHTTP(afterResp, afterReq)
+	if afterResp.Code != http.StatusOK {
+		t.Fatalf("expected detail after logout to remain public 200, got %d", afterResp.Code)
+	}
+	afterData := decodeRouterEnvelopeData(t, afterResp)
+	if afterData["content"] == "Paid full content" {
+		t.Fatalf("did not expect logged-out token to receive paid content")
+	}
+	if images, ok := afterData["contentImages"].([]any); !ok || len(images) != 0 {
+		t.Fatalf("did not expect logged-out token to receive protected images, got %#v", afterData["contentImages"])
+	}
+	if afterData["isUnlocked"] != false {
+		t.Fatalf("expected logged-out token to be treated as locked, got %v", afterData["isUnlocked"])
+	}
+}
+
+func TestProtectedContentImageStaticAccessRequiresUnlock(t *testing.T) {
+	deps := setupRouterTestEnv(t)
+	deps.UploadDir = t.TempDir()
+	contentDir := filepath.Join(deps.UploadDir, "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		t.Fatalf("create content dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(contentDir, "paid.png"), []byte("paid image"), 0o644); err != nil {
+		t.Fatalf("write content image: %v", err)
+	}
+
+	reader := internalAuth.User{Username: "image-reader", Password: "secret123", Points: 100}
+	author := internalAuth.User{Username: "image-author", Password: "secret123", Points: 0}
+	if err := deps.DB.Create(&reader).Error; err != nil {
+		t.Fatalf("seed reader: %v", err)
+	}
+	if err := deps.DB.Create(&author).Error; err != nil {
+		t.Fatalf("seed author: %v", err)
+	}
+
+	article := internalArticle.Article{
+		AuthorID:       author.ID,
+		Title:          "Paid Image Detail",
+		Content:        "Paid full content",
+		Preview:        "Paid preview",
+		ContentImages:  "/uploads/content/paid.png",
+		Status:         "published",
+		IsFree:         false,
+		RequiredPoints: 20,
+	}
+	if err := deps.DB.Create(&article).Error; err != nil {
+		t.Fatalf("seed paid article: %v", err)
+	}
+	if err := deps.DB.Create(&internalArticle.ArticleUnlock{ArticleID: article.ID, UserID: reader.ID}).Error; err != nil {
+		t.Fatalf("seed unlock: %v", err)
+	}
+
+	token, err := utils.GenerateAccessToken(reader.ID, reader.Username, 0)
+	if err != nil {
+		t.Fatalf("generate access token: %v", err)
+	}
+
+	r := SetUpRouter(deps)
+
+	guestReq := httptest.NewRequest(http.MethodGet, "/uploads/content/paid.png", nil)
+	guestResp := httptest.NewRecorder()
+	r.ServeHTTP(guestResp, guestReq)
+	if guestResp.Code != http.StatusNotFound {
+		t.Fatalf("expected guest content image to return 404, got %d", guestResp.Code)
+	}
+
+	unlockedReq := httptest.NewRequest(http.MethodGet, "/uploads/content/paid.png", nil)
+	unlockedReq.Header.Set("Authorization", "Bearer "+token)
+	unlockedResp := httptest.NewRecorder()
+	r.ServeHTTP(unlockedResp, unlockedReq)
+	if unlockedResp.Code != http.StatusOK {
+		t.Fatalf("expected unlocked content image to return 200, got %d", unlockedResp.Code)
+	}
+	if unlockedResp.Body.String() != "paid image" {
+		t.Fatalf("expected image body, got %q", unlockedResp.Body.String())
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutReq.Header.Set("Authorization", "Bearer "+token)
+	logoutResp := httptest.NewRecorder()
+	r.ServeHTTP(logoutResp, logoutReq)
+	if logoutResp.Code != http.StatusOK {
+		t.Fatalf("expected logout status 200, got %d", logoutResp.Code)
+	}
+
+	loggedOutReq := httptest.NewRequest(http.MethodGet, "/uploads/content/paid.png", nil)
+	loggedOutReq.Header.Set("Authorization", "Bearer "+token)
+	loggedOutResp := httptest.NewRecorder()
+	r.ServeHTTP(loggedOutResp, loggedOutReq)
+	if loggedOutResp.Code != http.StatusNotFound {
+		t.Fatalf("expected logged-out content image to return 404, got %d", loggedOutResp.Code)
+	}
+}
+
+func decodeRouterEnvelopeData(t *testing.T, resp *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+
+	var envelope map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected response data object, got %#v", envelope["data"])
+	}
+	return data
 }
 
 func TestRateLimitProtectsSensitiveRoutes(t *testing.T) {

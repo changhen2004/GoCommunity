@@ -14,7 +14,6 @@ import (
 	internalAuth "resource_community_go/internal/auth"
 	"resource_community_go/internal/cachekey"
 	internalPoints "resource_community_go/internal/points"
-	"resource_community_go/utils"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -235,7 +234,7 @@ func TestGetArticlesReturnsEnvelopeWithoutModelFields(t *testing.T) {
 	if err := db.Create(&Article{
 		AuthorID:      1,
 		Title:         "Article One",
-		Content:       "Body",
+		Content:       "Full list body",
 		Preview:       "Preview",
 		CoverURL:      "/uploads/covers/list.png",
 		ContentImages: "/uploads/content/list-1.png",
@@ -245,6 +244,15 @@ func TestGetArticlesReturnsEnvelopeWithoutModelFields(t *testing.T) {
 		CommentCount:  2,
 	}).Error; err != nil {
 		t.Fatalf("seed article: %v", err)
+	}
+	if err := db.Create(&Article{
+		AuthorID: 1,
+		Title:    "Draft Article",
+		Content:  "Draft full body",
+		Preview:  "Draft preview",
+		Status:   "draft",
+	}).Error; err != nil {
+		t.Fatalf("seed draft article: %v", err)
 	}
 
 	router := gin.New()
@@ -266,15 +274,21 @@ func TestGetArticlesReturnsEnvelopeWithoutModelFields(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected data array, got %#v", envelope["data"])
 	}
+	if len(rawData) != 1 {
+		t.Fatalf("expected only published articles, got %d", len(rawData))
+	}
 	entry := rawData[0].(map[string]any)
 	if _, ok := entry["authorId"]; !ok {
 		t.Fatal("expected authorId field in article list response")
 	}
+	if _, ok := entry["content"]; ok {
+		t.Fatalf("did not expect full content in article list response: %#v", entry["content"])
+	}
 	if entry["coverUrl"] != "/uploads/covers/list.png" {
 		t.Fatalf("expected coverUrl in list response, got %#v", entry["coverUrl"])
 	}
-	if images, ok := entry["contentImages"].([]any); !ok || len(images) != 1 {
-		t.Fatalf("expected contentImages field in list response, got %#v", entry["contentImages"])
+	if _, ok := entry["contentImages"]; ok {
+		t.Fatalf("did not expect protected content images in list response: %#v", entry["contentImages"])
 	}
 	if entry["commentCount"] != float64(2) {
 		t.Fatalf("expected commentCount in list response, got %#v", entry["commentCount"])
@@ -464,7 +478,12 @@ func TestGetArticleDetailShowsAccessRulesForGuestAndUnlockedUser(t *testing.T) {
 	}
 
 	router := gin.New()
-	router.GET("/api/articles/:id", handler.GetArticleByID)
+	router.GET("/api/articles/:id", func(ctx *gin.Context) {
+		if ctx.Query("as") == "reader" {
+			ctx.Set("userID", reader.ID)
+		}
+		handler.GetArticleByID(ctx)
+	})
 
 	t.Run("guest sees locked paid article", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID), nil)
@@ -481,14 +500,14 @@ func TestGetArticleDetailShowsAccessRulesForGuestAndUnlockedUser(t *testing.T) {
 		}
 
 		data := envelope["data"].(map[string]any)
-		if data["content"] != "Full premium body" {
-			t.Fatalf("expected content in detail response, got %v", data["content"])
+		if data["content"] == "Full premium body" {
+			t.Fatalf("did not expect locked guest to receive paid content")
 		}
 		if data["coverUrl"] != "/uploads/covers/premium.png" {
 			t.Fatalf("expected cover url in detail response, got %v", data["coverUrl"])
 		}
-		if images, ok := data["contentImages"].([]any); !ok || len(images) != 2 {
-			t.Fatalf("expected 2 content images in detail response, got %#v", data["contentImages"])
+		if images, ok := data["contentImages"].([]any); !ok || len(images) != 0 {
+			t.Fatalf("did not expect locked guest to receive protected content images, got %#v", data["contentImages"])
 		}
 		authorData := data["author"].(map[string]any)
 		if authorData["username"] != "author001" {
@@ -510,13 +529,7 @@ func TestGetArticleDetailShowsAccessRulesForGuestAndUnlockedUser(t *testing.T) {
 	})
 
 	t.Run("unlocked user sees unlocked status", func(t *testing.T) {
-		token, err := utils.GenerateJWT(reader.ID, reader.Username)
-		if err != nil {
-			t.Fatalf("generate jwt: %v", err)
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID), nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+		req := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID)+"?as=reader", nil)
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
 
@@ -533,21 +546,20 @@ func TestGetArticleDetailShowsAccessRulesForGuestAndUnlockedUser(t *testing.T) {
 		if data["isUnlocked"] != true {
 			t.Fatalf("expected unlocked user to see isUnlocked=true, got %v", data["isUnlocked"])
 		}
+		if data["content"] != "Full premium body" {
+			t.Fatalf("expected unlocked user to receive paid content, got %v", data["content"])
+		}
+		if images, ok := data["contentImages"].([]any); !ok || len(images) != 2 {
+			t.Fatalf("expected unlocked user to receive protected content images, got %#v", data["contentImages"])
+		}
 	})
 
 	t.Run("repeated detail access does not change unlocked state", func(t *testing.T) {
-		token, err := utils.GenerateJWT(reader.ID, reader.Username)
-		if err != nil {
-			t.Fatalf("generate jwt: %v", err)
-		}
-
-		req1 := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID), nil)
-		req1.Header.Set("Authorization", "Bearer "+token)
+		req1 := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID)+"?as=reader", nil)
 		resp1 := httptest.NewRecorder()
 		router.ServeHTTP(resp1, req1)
 
-		req2 := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID), nil)
-		req2.Header.Set("Authorization", "Bearer "+token)
+		req2 := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(articleRecord.ID)+"?as=reader", nil)
 		resp2 := httptest.NewRecorder()
 		router.ServeHTTP(resp2, req2)
 
@@ -564,6 +576,116 @@ func TestGetArticleDetailShowsAccessRulesForGuestAndUnlockedUser(t *testing.T) {
 			t.Fatalf("expected repeated access to stay unlocked, got %v", data["isUnlocked"])
 		}
 	})
+}
+
+func TestGetArticleDetailDraftVisibility(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupArticleTestHandler(t, false)
+
+	author := internalAuth.User{Username: "draft-author", Password: "secret123"}
+	reader := internalAuth.User{Username: "draft-reader", Password: "secret123"}
+	if err := db.Create(&author).Error; err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+	if err := db.Create(&reader).Error; err != nil {
+		t.Fatalf("create reader: %v", err)
+	}
+
+	draft := Article{
+		AuthorID: author.ID,
+		Title:    "Private Draft",
+		Content:  "Draft full body",
+		Preview:  "Draft preview",
+		Status:   "draft",
+		IsFree:   true,
+	}
+	if err := db.Create(&draft).Error; err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/api/articles/:id", func(ctx *gin.Context) {
+		switch ctx.Query("as") {
+		case "author":
+			ctx.Set("userID", author.ID)
+		case "reader":
+			ctx.Set("userID", reader.ID)
+		}
+		handler.GetArticleByID(ctx)
+	})
+
+	guestReq := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(draft.ID), nil)
+	guestResp := httptest.NewRecorder()
+	router.ServeHTTP(guestResp, guestReq)
+	if guestResp.Code != http.StatusNotFound {
+		t.Fatalf("expected guest draft detail to return 404, got %d", guestResp.Code)
+	}
+
+	readerReq := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(draft.ID)+"?as=reader", nil)
+	readerResp := httptest.NewRecorder()
+	router.ServeHTTP(readerResp, readerReq)
+	if readerResp.Code != http.StatusNotFound {
+		t.Fatalf("expected non-author draft detail to return 404, got %d", readerResp.Code)
+	}
+
+	authorReq := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(draft.ID)+"?as=author", nil)
+	authorResp := httptest.NewRecorder()
+	router.ServeHTTP(authorResp, authorReq)
+	if authorResp.Code != http.StatusOK {
+		t.Fatalf("expected author draft detail to return 200, got %d", authorResp.Code)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal(authorResp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal author response: %v", err)
+	}
+	data := envelope["data"].(map[string]any)
+	if data["content"] != "Draft full body" {
+		t.Fatalf("expected author to receive draft content, got %v", data["content"])
+	}
+}
+
+func TestDraftArticlePublicActionsAreNotVisible(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupArticleTestHandler(t, false)
+
+	draft := Article{
+		AuthorID: 1,
+		Title:    "Draft",
+		Content:  "Draft full body",
+		Preview:  "Draft preview",
+		Status:   "draft",
+		IsFree:   true,
+	}
+	if err := db.Create(&draft).Error; err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/api/articles/:id/like", handler.GetArticleLikes)
+	router.POST("/api/articles/:id/like", handler.LikeArticle)
+
+	likesReq := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(draft.ID)+"/like", nil)
+	likesResp := httptest.NewRecorder()
+	router.ServeHTTP(likesResp, likesReq)
+	if likesResp.Code != http.StatusNotFound {
+		t.Fatalf("expected draft likes to return 404, got %d", likesResp.Code)
+	}
+
+	likeReq := httptest.NewRequest(http.MethodPost, "/api/articles/"+toID(draft.ID)+"/like", nil)
+	likeResp := httptest.NewRecorder()
+	router.ServeHTTP(likeResp, likeReq)
+	if likeResp.Code != http.StatusNotFound {
+		t.Fatalf("expected draft like action to return 404, got %d", likeResp.Code)
+	}
+
+	var reloaded Article
+	if err := db.First(&reloaded, draft.ID).Error; err != nil {
+		t.Fatalf("reload draft: %v", err)
+	}
+	if reloaded.LikeCount != 0 {
+		t.Fatalf("expected draft like count to remain 0, got %d", reloaded.LikeCount)
+	}
 }
 
 func TestGetHotArticlesUsesRedisZSetRanking(t *testing.T) {
@@ -628,9 +750,61 @@ func TestGetHotArticlesUsesRedisZSetRanking(t *testing.T) {
 	}
 }
 
+func TestGetHotArticlesSeedsOnlyPublishedArticles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupArticleTestHandler(t, true)
+
+	now := time.Now()
+	draft := Article{
+		Model:     gorm.Model{CreatedAt: now, UpdatedAt: now},
+		AuthorID:  1,
+		Title:     "Draft Heat",
+		Content:   "Draft body",
+		Preview:   "Draft preview",
+		Status:    "draft",
+		ViewCount: 1000,
+		LikeCount: 1000,
+	}
+	published := Article{
+		Model:     gorm.Model{CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)},
+		AuthorID:  1,
+		Title:     "Published Heat",
+		Content:   "Body",
+		Preview:   "Preview",
+		Status:    "published",
+		ViewCount: 1,
+		LikeCount: 1,
+	}
+	if err := db.Create(&[]Article{draft, published}).Error; err != nil {
+		t.Fatalf("seed articles: %v", err)
+	}
+
+	resp, err := handler.service.ListHot(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("list hot: %v", err)
+	}
+	if len(resp) != 1 {
+		t.Fatalf("expected one hot article, got %d", len(resp))
+	}
+	if resp[0].Title != "Published Heat" {
+		t.Fatalf("expected published article in hot list, got %q", resp[0].Title)
+	}
+}
+
 func TestGetArticleLikesUsesUnifiedResponseEnvelope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, _ := setupArticleTestHandler(t, true)
+	handler, db := setupArticleTestHandler(t, true)
+
+	if err := db.Create(&Article{
+		AuthorID: 1,
+		Title:    "Liked Article",
+		Content:  "Body",
+		Preview:  "Preview",
+		Status:   "published",
+		IsFree:   true,
+	}).Error; err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
 
 	repo := handler.service.repo
 	if err := repo.redisDB.Set(context.Background(), "article:1:like", 7, 0).Err(); err != nil {

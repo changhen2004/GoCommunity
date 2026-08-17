@@ -92,7 +92,15 @@ func (s *Service) Create(ctx context.Context, articleID string, req CreateCommen
 func (s *Service) List(articleID string) ([]CommentResponse, error) {
 	parsedArticleID, err := strconv.ParseUint(articleID, 10, 64)
 	if err != nil {
-		return []CommentResponse{}, nil
+		return nil, ErrArticleNotFound
+	}
+
+	exists, err := s.repo.ArticleExists(uint(parsedArticleID))
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrArticleNotFound
 	}
 
 	return s.repo.ListByArticleID(uint(parsedArticleID))

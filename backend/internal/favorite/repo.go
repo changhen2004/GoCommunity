@@ -22,7 +22,7 @@ func NewRepo(db *gorm.DB, redisDB *redis.Client) *Repo {
 
 func (r *Repo) ArticleExists(articleID uint) (bool, error) {
 	var count int64
-	if err := r.db.Table("articles").Where("id = ?", articleID).Count(&count).Error; err != nil {
+	if err := r.db.Table("articles").Where("id = ? AND status = ?", articleID, "published").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil

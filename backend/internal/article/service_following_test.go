@@ -8,6 +8,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"resource_community_go/internal/asyncjob"
 	"resource_community_go/internal/auth"
 	"resource_community_go/internal/cachekey"
 	"resource_community_go/internal/social"
@@ -56,5 +57,48 @@ func TestServiceCreateInvalidatesFollowingFeedCache(t *testing.T) {
 
 	if exists := redisDB.Exists(context.Background(), cacheKey).Val(); exists != 0 {
 		t.Fatalf("expected following feed cache to be invalidated after publish")
+	}
+}
+
+func TestServiceCreateDoesNotPublishArticlePublishedEvent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&auth.User{}, &Article{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	author := auth.User{Username: "author", Password: "hashed-password"}
+	if err := db.Create(&author).Error; err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+
+	publisher := &recordingArticleDetailPublisher{}
+	service := NewService(NewRepo(db, nil), publisher, nil)
+	ctx := context.WithValue(context.Background(), "userID", author.ID)
+
+	if _, err := service.Create(ctx, CreateArticleRequest{
+		Title:   "draft",
+		Content: "draft content",
+		Preview: "draft preview",
+		Status:  "draft",
+	}); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if got := publisher.count(asyncjob.TypeArticlePublished); got != 0 {
+		t.Fatalf("expected draft create not to publish article.published, got %d", got)
+	}
+
+	if _, err := service.Create(ctx, CreateArticleRequest{
+		Title:   "published",
+		Content: "published content",
+		Preview: "published preview",
+		Status:  "published",
+	}); err != nil {
+		t.Fatalf("create published: %v", err)
+	}
+	if got := publisher.count(asyncjob.TypeArticlePublished); got != 0 {
+		t.Fatalf("expected published create not to publish article.published, got %d", got)
 	}
 }

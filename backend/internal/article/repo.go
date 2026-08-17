@@ -41,7 +41,7 @@ func (r *Repo) Create(article *Article) error {
 func (r *Repo) List(query ListArticlesQuery) ([]Article, error) {
 	var articles []Article
 
-	db := r.db.Model(&Article{})
+	db := r.db.Model(&Article{}).Where("status = ?", "published")
 	if query.Keyword != "" {
 		db = db.Where("title LIKE ?", "%"+query.Keyword+"%")
 	}
@@ -106,6 +106,29 @@ func (r *Repo) FindByID(id string) (*Article, error) {
 		return nil, err
 	}
 	return &article, nil
+}
+
+func (r *Repo) FindPublishedByID(id string) (*Article, error) {
+	var article Article
+	if err := r.db.Where("id = ? AND status = ?", id, "published").First(&article).Error; err != nil {
+		return nil, err
+	}
+	return &article, nil
+}
+
+func (r *Repo) FindByContentImageURL(url string) (*Article, error) {
+	var articles []Article
+	if err := r.db.Where("content_images LIKE ?", "%"+url+"%").Find(&articles).Error; err != nil {
+		return nil, err
+	}
+	for _, article := range articles {
+		for _, contentImage := range splitContentImages(article.ContentImages) {
+			if contentImage == url {
+				return &article, nil
+			}
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *Repo) FindAuthorByID(authorID uint) (ArticleAuthorResponse, error) {
@@ -285,7 +308,7 @@ func (r *Repo) ListByIDs(ids []uint) ([]Article, error) {
 	}
 
 	var articles []Article
-	if err := r.db.Where("id IN ?", ids).Find(&articles).Error; err != nil {
+	if err := r.db.Where("id IN ? AND status = ?", ids, "published").Find(&articles).Error; err != nil {
 		return nil, err
 	}
 
@@ -326,7 +349,8 @@ func (r *Repo) SeedHotRanking(ctx context.Context, limit int) error {
 	}
 
 	var articles []Article
-	if err := r.db.Order("like_count DESC").
+	if err := r.db.Where("status = ?", "published").
+		Order("like_count DESC").
 		Order("favorite_count DESC").
 		Order("view_count DESC").
 		Order("created_at DESC").
