@@ -113,6 +113,12 @@ func TestMigrateAddsArticleOwnershipAndStatsFields(t *testing.T) {
 	if !db.Migrator().HasTable(&points.PointLedger{}) {
 		t.Fatal("expected point_ledgers table to exist")
 	}
+	if !db.Migrator().HasTable(&points.PointOperation{}) {
+		t.Fatal("expected point_operations table to exist")
+	}
+	if !db.Migrator().HasColumn(&points.PointLedger{}, "operation_key") {
+		t.Fatal("expected operation_key column to exist")
+	}
 	if !db.Migrator().HasTable(&points.UserCheckIn{}) {
 		t.Fatal("expected user_check_ins table to exist")
 	}

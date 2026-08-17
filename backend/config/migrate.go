@@ -19,6 +19,7 @@ func Migrate(db *gorm.DB) error {
 		&comment.Comment{},
 		&favorite.Favorite{},
 		&points.PointLedger{},
+		&points.PointOperation{},
 		&points.UserCheckIn{},
 		&points.UserPrivilege{},
 		&social.Follow{},
