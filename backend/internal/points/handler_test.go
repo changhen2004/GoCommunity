@@ -38,8 +38,8 @@ func (testArticle) TableName() string {
 
 type testArticleUnlock struct {
 	gorm.Model
-	ArticleID uint
-	UserID    uint
+	ArticleID uint `gorm:"not null;index:idx_test_article_unlocks_article_user,unique"`
+	UserID    uint `gorm:"not null;index:idx_test_article_unlocks_article_user,unique"`
 }
 
 func (testArticleUnlock) TableName() string {
@@ -208,8 +208,17 @@ func TestPointsFlow(t *testing.T) {
 		repeatReq := httptest.NewRequest(http.MethodPost, "/api/articles/"+strconv.FormatUint(uint64(article.ID), 10)+"/unlock", nil)
 		repeatResp := httptest.NewRecorder()
 		router.ServeHTTP(repeatResp, repeatReq)
-		if repeatResp.Code != http.StatusConflict {
-			t.Fatalf("expected repeat unlock status 409, got %d", repeatResp.Code)
+		if repeatResp.Code != http.StatusOK {
+			t.Fatalf("expected repeat unlock status 200, got %d", repeatResp.Code)
+		}
+
+		var repeatEnvelope map[string]any
+		if err := json.Unmarshal(repeatResp.Body.Bytes(), &repeatEnvelope); err != nil {
+			t.Fatalf("unmarshal repeat unlock: %v", err)
+		}
+		repeatData := repeatEnvelope["data"].(map[string]any)
+		if repeatData["balance"] != float64(25) {
+			t.Fatalf("expected repeat unlock to return balance 25, got %v", repeatData["balance"])
 		}
 
 		var userAfterRepeat internalAuth.User

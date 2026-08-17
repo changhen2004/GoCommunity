@@ -131,15 +131,8 @@ func (s *Service) UnlockArticle(userID uint, articleID string) (UnlockArticleRes
 		}, nil
 	}
 
-	unlocked, err := s.repo.HasArticleUnlock(article.ID, userID)
-	if err != nil {
-		return UnlockArticleResponse{}, err
-	}
-	if unlocked {
-		return UnlockArticleResponse{}, ErrAlreadyUnlocked
-	}
-
-	balance, err := s.repo.UnlockArticle(userID, article.ID, article.RequiredPoints)
+	operationKey := fmt.Sprintf("unlock_paid_resource:%d:%d", userID, article.ID)
+	balance, err := s.repo.UnlockArticleWithKey(userID, article.ID, article.RequiredPoints, operationKey)
 	if err != nil {
 		return UnlockArticleResponse{}, err
 	}
@@ -158,15 +151,8 @@ func (s *Service) RedeemPrivilege(userID uint, req RedeemPrivilegeRequest) (Rede
 		return RedeemPrivilegeResponse{}, ErrPrivilegeNotFound
 	}
 
-	hasPrivilege, err := s.repo.HasPrivilege(userID, req.PrivilegeKey)
-	if err != nil {
-		return RedeemPrivilegeResponse{}, err
-	}
-	if hasPrivilege {
-		return RedeemPrivilegeResponse{}, ErrPrivilegeAlreadyRedeemed
-	}
-
-	balance, err := s.repo.RedeemPrivilege(userID, req.PrivilegeKey, cost)
+	operationKey := fmt.Sprintf("redeem_privilege:%d:%s", userID, req.PrivilegeKey)
+	balance, err := s.repo.RedeemPrivilegeWithKey(userID, req.PrivilegeKey, cost, operationKey)
 	if err != nil {
 		return RedeemPrivilegeResponse{}, err
 	}
