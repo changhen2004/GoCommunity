@@ -47,8 +47,8 @@ uploads/
 # ========== Debug ==========
 __debug_bin
 debug
+.worktrees/
 
 /docs/*
 !docs/benchmark.md
 !docs/evidence/
-
