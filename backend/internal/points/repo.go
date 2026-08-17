@@ -2,6 +2,7 @@ package points
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	internalAuth "resource_community_go/internal/auth"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repo struct {
@@ -36,6 +38,35 @@ func (articleUnlockRecord) TableName() string {
 
 func NewRepo(db *gorm.DB, redisDB *redis.Client) *Repo {
 	return &Repo{db: db, redisDB: redisDB}
+}
+
+var errPointOperationExists = errors.New("point operation already exists")
+
+func createPointOperation(tx *gorm.DB, operation PointOperation) error {
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&operation)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errPointOperationExists
+	}
+	return nil
+}
+
+func getPointOperation(db *gorm.DB, userID uint, operationKey string) (*PointOperation, error) {
+	var operation PointOperation
+	if err := db.Where("user_id = ? AND operation_key = ?", userID, operationKey).Take(&operation).Error; err != nil {
+		return nil, err
+	}
+	return &operation, nil
+}
+
+func getUserBalance(tx *gorm.DB, userID uint) (uint, error) {
+	var user internalAuth.User
+	if err := tx.Select("points").First(&user, userID).Error; err != nil {
+		return 0, err
+	}
+	return user.Points, nil
 }
 
 func (r *Repo) GetUserByID(userID uint) (*internalAuth.User, error) {
@@ -112,6 +143,66 @@ func (r *Repo) HasCheckedInOn(userID uint, date string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (r *Repo) AwardPointsWithKey(userID uint, amount uint, source, referenceType string, referenceID uint, description, operationKey string) (uint, error) {
+	var balance uint
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		err := createPointOperation(tx, PointOperation{
+			UserID:       userID,
+			OperationKey: operationKey,
+			Change:       int(amount),
+		})
+		if errors.Is(err, errPointOperationExists) {
+			operation, getErr := getPointOperation(tx, userID, operationKey)
+			if getErr != nil {
+				return getErr
+			}
+			balance = operation.BalanceAfter
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		result := tx.Model(&internalAuth.User{}).
+			Where("id = ?", userID).
+			UpdateColumn("points", gorm.Expr("points + ?", amount))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+
+		updatedBalance, err := getUserBalance(tx, userID)
+		if err != nil {
+			return err
+		}
+		balance = updatedBalance
+
+		if err := tx.Create(&PointLedger{
+			UserID:        userID,
+			OperationKey:  &operationKey,
+			Change:        int(amount),
+			BalanceAfter:  balance,
+			Direction:     "income",
+			Source:        source,
+			ReferenceType: referenceType,
+			ReferenceID:   referenceID,
+			Description:   description,
+		}).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&PointOperation{}).
+			Where("user_id = ? AND operation_key = ?", userID, operationKey).
+			Update("balance_after", balance).Error
+	})
+	if err == nil {
+		r.DeleteSummaryCache(context.Background(), userID)
+	}
+	return balance, err
 }
 
 func (r *Repo) AwardPoints(userID uint, amount uint, source, referenceType string, referenceID uint, description string) (uint, error) {
