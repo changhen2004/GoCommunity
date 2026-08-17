@@ -16,6 +16,7 @@ func Migrate(db *gorm.DB) error {
 		&auth.User{},
 		&article.Article{},
 		&article.ArticleUnlock{},
+		&article.ArticleLike{},
 		&comment.Comment{},
 		&favorite.Favorite{},
 		&points.PointLedger{},

@@ -104,6 +104,12 @@ func TestMigrateAddsArticleOwnershipAndStatsFields(t *testing.T) {
 	if !db.Migrator().HasTable(&article.ArticleUnlock{}) {
 		t.Fatal("expected article_unlocks table to exist")
 	}
+	if !db.Migrator().HasTable(&article.ArticleLike{}) {
+		t.Fatal("expected article_likes table to exist")
+	}
+	if !db.Migrator().HasIndex(&article.ArticleLike{}, "idx_article_likes_article_user") {
+		t.Fatal("expected article_likes article/user unique index to exist")
+	}
 	if !db.Migrator().HasTable(&comment.Comment{}) {
 		t.Fatal("expected comments table to exist")
 	}

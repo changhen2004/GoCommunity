@@ -324,28 +324,24 @@ func (s *Service) doArticleDetailCacheFill(cacheKey string, fill func() (article
 	return call.payload, call.err
 }
 
-func (s *Service) Like(ctx context.Context, articleID string) (LikeActionResponse, error) {
+func (s *Service) Like(ctx context.Context, articleID string, userID uint) (LikeActionResponse, error) {
+	parsedArticleID, err := strconv.ParseUint(articleID, 10, 64)
+	if err != nil {
+		return LikeActionResponse{}, ErrArticleNotFound
+	}
 	if _, err := s.repo.FindPublishedByID(articleID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return LikeActionResponse{}, ErrArticleNotFound
 		}
 		return LikeActionResponse{}, err
 	}
-	likes, err := s.repo.IncrementLikeRedisOnly(ctx, articleID)
+	likes, changed, err := s.repo.Like(ctx, uint(parsedArticleID), userID)
 	if err != nil {
 		return LikeActionResponse{}, err
 	}
-	parsedArticleID, parseErr := strconv.ParseUint(articleID, 10, 64)
-	if parseErr == nil {
-		if err := s.publisher.Publish(ctx, asyncjob.Job{
-			Type: asyncjob.TypeArticleLiked,
-			Payload: map[string]uint{
-				"articleID": uint(parsedArticleID),
-			},
-		}); err != nil {
-			if err := s.ApplyLike(ctx, uint(parsedArticleID)); err != nil {
-				return LikeActionResponse{}, err
-			}
+	if changed {
+		if err := s.repo.AddHotScore(ctx, uint(parsedArticleID), hotScoreLike); err != nil {
+			return LikeActionResponse{}, err
 		}
 	}
 	s.repo.DeleteArticlesCacheByPrefix(ctx, cachekey.ArticleListPrefix)
@@ -353,7 +349,37 @@ func (s *Service) Like(ctx context.Context, articleID string) (LikeActionRespons
 	s.repo.DeleteArticleCacheKeys(ctx, cachekey.ArticleDetailKey(articleID))
 
 	return LikeActionResponse{
-		Message: "Article liked successfully",
+		Message: "article liked successfully",
+		Likes:   likes,
+	}, nil
+}
+
+func (s *Service) Unlike(ctx context.Context, articleID string, userID uint) (LikeActionResponse, error) {
+	parsedArticleID, err := strconv.ParseUint(articleID, 10, 64)
+	if err != nil {
+		return LikeActionResponse{}, ErrArticleNotFound
+	}
+	if _, err := s.repo.FindPublishedByID(articleID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return LikeActionResponse{}, ErrArticleNotFound
+		}
+		return LikeActionResponse{}, err
+	}
+	likes, changed, err := s.repo.Unlike(ctx, uint(parsedArticleID), userID)
+	if err != nil {
+		return LikeActionResponse{}, err
+	}
+	if changed {
+		if err := s.repo.AddHotScore(ctx, uint(parsedArticleID), -hotScoreLike); err != nil {
+			return LikeActionResponse{}, err
+		}
+	}
+	s.repo.DeleteArticlesCacheByPrefix(ctx, cachekey.ArticleListPrefix)
+	s.repo.DeleteArticlesCacheByPrefix(ctx, cachekey.ArticleHotPrefix)
+	s.repo.DeleteArticleCacheKeys(ctx, cachekey.ArticleDetailKey(articleID))
+
+	return LikeActionResponse{
+		Message: "article unliked successfully",
 		Likes:   likes,
 	}, nil
 }
@@ -440,9 +466,6 @@ func (s *Service) RecordView(ctx context.Context, articleID uint) error {
 }
 
 func (s *Service) ApplyLike(ctx context.Context, articleID uint) error {
-	if _, err := s.repo.IncrementLike(ctx, strconv.FormatUint(uint64(articleID), 10)); err != nil {
-		return err
-	}
 	if err := s.repo.AddHotScore(ctx, articleID, hotScoreLike); err != nil {
 		return err
 	}

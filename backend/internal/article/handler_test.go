@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,10 +30,16 @@ func setupArticleTestHandler(t *testing.T, withRedis bool) (*Handler, *gorm.DB) 
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sqlite db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(
 		&internalAuth.User{},
 		&Article{},
 		&ArticleUnlock{},
+		&ArticleLike{},
 		&internalPoints.PointLedger{},
 		&internalPoints.UserCheckIn{},
 		&internalPoints.UserPrivilege{},
@@ -663,7 +670,10 @@ func TestDraftArticlePublicActionsAreNotVisible(t *testing.T) {
 
 	router := gin.New()
 	router.GET("/api/articles/:id/like", handler.GetArticleLikes)
-	router.POST("/api/articles/:id/like", handler.LikeArticle)
+	router.POST("/api/articles/:id/like", func(ctx *gin.Context) {
+		ctx.Set("userID", uint(1))
+		handler.LikeArticle(ctx)
+	})
 
 	likesReq := httptest.NewRequest(http.MethodGet, "/api/articles/"+toID(draft.ID)+"/like", nil)
 	likesResp := httptest.NewRecorder()
@@ -791,19 +801,26 @@ func TestGetHotArticlesSeedsOnlyPublishedArticles(t *testing.T) {
 	}
 }
 
-func TestGetArticleLikesUsesUnifiedResponseEnvelope(t *testing.T) {
+func TestGetArticleLikesUsesRelationTableAsFactSource(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db := setupArticleTestHandler(t, true)
 
-	if err := db.Create(&Article{
+	likedArticle := Article{
 		AuthorID: 1,
 		Title:    "Liked Article",
 		Content:  "Body",
 		Preview:  "Preview",
 		Status:   "published",
 		IsFree:   true,
-	}).Error; err != nil {
+	}
+	if err := db.Create(&likedArticle).Error; err != nil {
 		t.Fatalf("seed article: %v", err)
+	}
+	if err := db.Create(&[]ArticleLike{
+		{ArticleID: likedArticle.ID, UserID: 1},
+		{ArticleID: likedArticle.ID, UserID: 2},
+	}).Error; err != nil {
+		t.Fatalf("seed likes: %v", err)
 	}
 
 	repo := handler.service.repo
@@ -827,8 +844,167 @@ func TestGetArticleLikesUsesUnifiedResponseEnvelope(t *testing.T) {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 	data := envelope["data"].(map[string]any)
-	if likes, ok := data["likes"].(float64); !ok || likes != 7 {
-		t.Fatalf("expected likes 7, got %#v", data["likes"])
+	if likes, ok := data["likes"].(float64); !ok || likes != 2 {
+		t.Fatalf("expected likes 2 from relation table, got %#v", data["likes"])
+	}
+	cached, err := repo.redisDB.Get(context.Background(), "article:1:like").Int()
+	if err != nil {
+		t.Fatalf("read synced redis count: %v", err)
+	}
+	if cached != 2 {
+		t.Fatalf("expected redis count to sync to 2, got %d", cached)
+	}
+}
+
+func TestLikeArticleIsIdempotentForSameUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupArticleTestHandler(t, true)
+
+	article := Article{
+		AuthorID: 1,
+		Title:    "Idempotent Like",
+		Content:  "Body",
+		Preview:  "Preview",
+		Status:   "published",
+		IsFree:   true,
+	}
+	if err := db.Create(&article).Error; err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
+
+	router := gin.New()
+	router.POST("/api/articles/:id/like", func(ctx *gin.Context) {
+		ctx.Set("userID", uint(42))
+		handler.LikeArticle(ctx)
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/articles/"+toID(article.ID)+"/like", nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected status 200 on request %d, got %d", i+1, resp.Code)
+		}
+	}
+
+	var likeRows int64
+	if err := db.Model(&ArticleLike{}).Where("article_id = ?", article.ID).Count(&likeRows).Error; err != nil {
+		t.Fatalf("count article likes: %v", err)
+	}
+	if likeRows != 1 {
+		t.Fatalf("expected one like relation, got %d", likeRows)
+	}
+
+	var reloaded Article
+	if err := db.First(&reloaded, article.ID).Error; err != nil {
+		t.Fatalf("reload article: %v", err)
+	}
+	if reloaded.LikeCount != 1 {
+		t.Fatalf("expected like_count 1, got %d", reloaded.LikeCount)
+	}
+}
+
+func TestUnlikeArticleIsIdempotentForSameUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupArticleTestHandler(t, true)
+
+	article := Article{
+		AuthorID:  1,
+		Title:     "Idempotent Unlike",
+		Content:   "Body",
+		Preview:   "Preview",
+		Status:    "published",
+		LikeCount: 1,
+		IsFree:    true,
+	}
+	if err := db.Create(&article).Error; err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
+	if err := db.Create(&ArticleLike{ArticleID: article.ID, UserID: 42}).Error; err != nil {
+		t.Fatalf("seed like: %v", err)
+	}
+
+	router := gin.New()
+	router.DELETE("/api/articles/:id/like", func(ctx *gin.Context) {
+		ctx.Set("userID", uint(42))
+		handler.UnlikeArticle(ctx)
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodDelete, "/api/articles/"+toID(article.ID)+"/like", nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected status 200 on request %d, got %d", i+1, resp.Code)
+		}
+	}
+
+	var likeRows int64
+	if err := db.Model(&ArticleLike{}).Where("article_id = ?", article.ID).Count(&likeRows).Error; err != nil {
+		t.Fatalf("count article likes: %v", err)
+	}
+	if likeRows != 0 {
+		t.Fatalf("expected no like relations, got %d", likeRows)
+	}
+
+	var reloaded Article
+	if err := db.First(&reloaded, article.ID).Error; err != nil {
+		t.Fatalf("reload article: %v", err)
+	}
+	if reloaded.LikeCount != 0 {
+		t.Fatalf("expected like_count 0, got %d", reloaded.LikeCount)
+	}
+}
+
+func TestConcurrentDuplicateLikesAreIdempotent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, db := setupArticleTestHandler(t, true)
+
+	article := Article{
+		AuthorID: 1,
+		Title:    "Concurrent Like",
+		Content:  "Body",
+		Preview:  "Preview",
+		Status:   "published",
+		IsFree:   true,
+	}
+	if err := db.Create(&article).Error; err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
+
+	const attempts = 12
+	var wg sync.WaitGroup
+	errs := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := handler.service.repo.Like(context.Background(), article.ID, 99)
+			if err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("like concurrently: %v", err)
+	}
+
+	var likeRows int64
+	if err := db.Model(&ArticleLike{}).Where("article_id = ?", article.ID).Count(&likeRows).Error; err != nil {
+		t.Fatalf("count article likes: %v", err)
+	}
+	if likeRows != 1 {
+		t.Fatalf("expected one like relation, got %d", likeRows)
+	}
+
+	var reloaded Article
+	if err := db.First(&reloaded, article.ID).Error; err != nil {
+		t.Fatalf("reload article: %v", err)
+	}
+	if reloaded.LikeCount != 1 {
+		t.Fatalf("expected like_count 1, got %d", reloaded.LikeCount)
 	}
 }
 

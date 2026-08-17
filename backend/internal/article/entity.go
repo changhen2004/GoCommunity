@@ -25,3 +25,9 @@ type ArticleUnlock struct {
 	ArticleID uint `gorm:"not null;index:idx_article_unlocks_article_user,unique"`
 	UserID    uint `gorm:"not null;index:idx_article_unlocks_article_user,unique"`
 }
+
+type ArticleLike struct {
+	ID        uint `gorm:"primarykey"`
+	ArticleID uint `gorm:"not null;index:idx_article_likes_article_user,unique"`
+	UserID    uint `gorm:"not null;index:idx_article_likes_article_user,unique"`
+}

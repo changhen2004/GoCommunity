@@ -9,6 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"resource_community_go/internal/cachekey"
 	"resource_community_go/internal/social"
 )
@@ -187,64 +188,136 @@ func (r *Repo) DeleteArticleCacheKeys(ctx context.Context, keys ...string) {
 	cachekey.DeleteKeys(ctx, r.redisDB, keys...)
 }
 
-func (r *Repo) IncrementLike(ctx context.Context, articleID string) (int, error) {
-	if err := r.db.Model(&Article{}).
-		Where("id = ?", articleID).
-		UpdateColumn("like_count", gorm.Expr("like_count + ?", 1)).
-		Error; err != nil {
-		return 0, err
-	}
-
-	article, err := r.FindByID(articleID)
-	if err != nil {
-		return 0, err
-	}
-
-	likes := int(article.LikeCount)
-	if r.redisDB != nil {
-		likeKey := "article:" + articleID + ":like"
-		if err := r.redisDB.Set(ctx, likeKey, likes, 0).Err(); err != nil {
-			return 0, err
-		}
-	}
-	return likes, nil
-}
-
-func (r *Repo) IncrementLikeRedisOnly(ctx context.Context, articleID string) (int, error) {
+func (r *Repo) Like(ctx context.Context, articleID, userID uint) (int, bool, error) {
 	ctx = normalizeContext(ctx)
 
-	current, err := r.GetLikeCount(ctx, articleID)
+	var likes int64
+	changed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&ArticleLike{
+			ArticleID: articleID,
+			UserID:    userID,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected > 0
+
+		if err := tx.Model(&ArticleLike{}).Where("article_id = ?", articleID).Count(&likes).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Article{}).
+			Where("id = ?", articleID).
+			UpdateColumn("like_count", likes).
+			Error
+	})
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
-	likes := current + 1
-	if r.redisDB != nil {
-		likeKey := "article:" + articleID + ":like"
-		if err := r.redisDB.Set(ctx, likeKey, likes, 0).Err(); err != nil {
-			return 0, err
-		}
+	if err := r.syncLikeCountCache(ctx, articleID, int(likes), boolToDelta(changed)); err != nil {
+		return 0, false, err
 	}
-	return likes, nil
+	return int(likes), changed, nil
+}
+
+func (r *Repo) Unlike(ctx context.Context, articleID, userID uint) (int, bool, error) {
+	ctx = normalizeContext(ctx)
+
+	var likes int64
+	changed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Where("article_id = ? AND user_id = ?", articleID, userID).Delete(&ArticleLike{})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected > 0
+
+		if err := tx.Model(&ArticleLike{}).Where("article_id = ?", articleID).Count(&likes).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Article{}).
+			Where("id = ?", articleID).
+			UpdateColumn("like_count", likes).
+			Error
+	})
+	if err != nil {
+		return 0, false, err
+	}
+
+	if err := r.syncLikeCountCache(ctx, articleID, int(likes), -boolToDelta(changed)); err != nil {
+		return 0, false, err
+	}
+	return int(likes), changed, nil
 }
 
 func (r *Repo) GetLikeCount(ctx context.Context, articleID string) (int, error) {
-	if r.redisDB != nil {
-		likeKey := "article:" + articleID + ":like"
-		value, err := r.redisDB.Get(ctx, likeKey).Result()
-		if err == nil {
-			return strconv.Atoi(value)
-		}
-		if err != redis.Nil {
-			return 0, err
-		}
-	}
-
-	article, err := r.FindByID(articleID)
+	parsedArticleID, err := strconv.ParseUint(articleID, 10, 64)
 	if err != nil {
 		return 0, err
 	}
-	return int(article.LikeCount), nil
+
+	var likes int64
+	if err := r.db.WithContext(normalizeContext(ctx)).
+		Model(&ArticleLike{}).
+		Where("article_id = ?", uint(parsedArticleID)).
+		Count(&likes).Error; err != nil {
+		return 0, err
+	}
+	if r.redisDB != nil {
+		_ = r.setLikeCountCache(ctx, articleID, int(likes))
+	}
+	return int(likes), nil
+}
+
+func (r *Repo) syncLikeCountCache(ctx context.Context, articleID uint, count int, delta int) error {
+	if r.redisDB == nil {
+		return nil
+	}
+
+	script := redis.NewScript(`
+local current = redis.call("GET", KEYS[1])
+if tonumber(ARGV[1]) == 0 then
+	redis.call("SET", KEYS[1], ARGV[2])
+	return tonumber(ARGV[2])
+end
+if current then
+	local next = redis.call("INCRBY", KEYS[1], ARGV[1])
+	if tonumber(next) < 0 then
+		redis.call("SET", KEYS[1], 0)
+		return 0
+	end
+	return next
+end
+redis.call("SET", KEYS[1], ARGV[2])
+return tonumber(ARGV[2])
+`)
+	_, err := script.Run(
+		ctx,
+		r.redisDB,
+		[]string{articleLikeKey(strconv.FormatUint(uint64(articleID), 10))},
+		delta,
+		count,
+	).Result()
+	return err
+}
+
+func (r *Repo) setLikeCountCache(ctx context.Context, articleID string, count int) error {
+	if r.redisDB == nil {
+		return nil
+	}
+	return r.redisDB.Set(normalizeContext(ctx), articleLikeKey(articleID), count, 0).Err()
+}
+
+func articleLikeKey(articleID string) string {
+	return "article:" + articleID + ":like"
+}
+
+func boolToDelta(changed bool) int {
+	if changed {
+		return 1
+	}
+	return 0
 }
 
 func (r *Repo) IncrementView(ctx context.Context, articleID string) (*Article, error) {

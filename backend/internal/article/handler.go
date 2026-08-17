@@ -135,7 +135,21 @@ func (h *Handler) GetArticleByID(ctx *gin.Context) {
 }
 
 func (h *Handler) LikeArticle(ctx *gin.Context) {
-	resp, err := h.service.Like(ctx, ctx.Param("id"))
+	resp, err := h.service.Like(ctx, ctx.Param("id"), ctx.GetUint("userID"))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):
+			writeError(ctx, http.StatusNotFound, 10003, "Article not found", "ARTICLE_NOT_FOUND")
+		default:
+			writeError(ctx, http.StatusInternalServerError, 10005, err.Error(), "INTERNAL_ERROR")
+		}
+		return
+	}
+	writeSuccess(ctx, http.StatusOK, resp)
+}
+
+func (h *Handler) UnlikeArticle(ctx *gin.Context) {
+	resp, err := h.service.Unlike(ctx, ctx.Param("id"), ctx.GetUint("userID"))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):

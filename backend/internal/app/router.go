@@ -121,6 +121,7 @@ func SetUpRouter(deps Dependencies) *gin.Engine {
 		protectedAPI.POST("/auth/logout", authHandler.Logout)
 		protectedAPI.POST("/articles", RateLimitMiddleware(deps.RedisDB, publishRateLimitRule), articleHandler.CreateArticle)
 		protectedAPI.POST("/articles/:id/like", articleHandler.LikeArticle)
+		protectedAPI.DELETE("/articles/:id/like", articleHandler.UnlikeArticle)
 		protectedAPI.POST("/articles/:id/unlock", pointsHandler.UnlockArticle)
 		protectedAPI.POST("/articles/:id/comments", RateLimitMiddleware(deps.RedisDB, commentRateLimitRule), commentHandler.CreateComment)
 		protectedAPI.DELETE("/comments/:id", commentHandler.DeleteComment)
