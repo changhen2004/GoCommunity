@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -68,24 +69,13 @@ func (s *Service) ListRecords(userID uint) ([]PointsRecordResponse, error) {
 }
 
 func (s *Service) CheckIn(userID uint) (CheckInResponse, error) {
-	if _, err := s.repo.GetUserByID(userID); err != nil {
+	date := todayString(time.Now())
+	operationKey := fmt.Sprintf("check_in:%d:%s", userID, date)
+	balance, err := s.repo.CreateCheckInAndAwardWithKey(userID, date, DailyCheckInAward, "daily check-in reward", operationKey)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return CheckInResponse{}, ErrUserNotFound
 		}
-		return CheckInResponse{}, err
-	}
-
-	date := todayString(time.Now())
-	checkedIn, err := s.repo.HasCheckedInOn(userID, date)
-	if err != nil {
-		return CheckInResponse{}, err
-	}
-	if checkedIn {
-		return CheckInResponse{}, ErrAlreadyCheckedInToday
-	}
-
-	balance, err := s.repo.CreateCheckInAndAward(userID, date, DailyCheckInAward, "daily check-in reward")
-	if err != nil {
 		return CheckInResponse{}, err
 	}
 
@@ -100,7 +90,8 @@ func (s *Service) AwardPublishResource(userID, articleID uint) error {
 	if userID == 0 || articleID == 0 {
 		return nil
 	}
-	_, err := s.repo.AwardPoints(userID, PublishResourceAward, "publish_resource", "article", articleID, "publish resource reward")
+	operationKey := fmt.Sprintf("publish_resource:%d:%d", userID, articleID)
+	_, err := s.repo.AwardPointsWithKey(userID, PublishResourceAward, "publish_resource", "article", articleID, "publish resource reward", operationKey)
 	return err
 }
 
@@ -108,7 +99,8 @@ func (s *Service) AwardQualityInteraction(userID, commentID uint) error {
 	if userID == 0 || commentID == 0 {
 		return nil
 	}
-	_, err := s.repo.AwardPoints(userID, QualityInteractionAward, "quality_interaction", "comment", commentID, "quality interaction reward")
+	operationKey := fmt.Sprintf("quality_interaction:%d:%d", userID, commentID)
+	_, err := s.repo.AwardPointsWithKey(userID, QualityInteractionAward, "quality_interaction", "comment", commentID, "quality interaction reward", operationKey)
 	return err
 }
 
@@ -139,15 +131,8 @@ func (s *Service) UnlockArticle(userID uint, articleID string) (UnlockArticleRes
 		}, nil
 	}
 
-	unlocked, err := s.repo.HasArticleUnlock(article.ID, userID)
-	if err != nil {
-		return UnlockArticleResponse{}, err
-	}
-	if unlocked {
-		return UnlockArticleResponse{}, ErrAlreadyUnlocked
-	}
-
-	balance, err := s.repo.UnlockArticle(userID, article.ID, article.RequiredPoints)
+	operationKey := fmt.Sprintf("unlock_paid_resource:%d:%d", userID, article.ID)
+	balance, err := s.repo.UnlockArticleWithKey(userID, article.ID, article.RequiredPoints, operationKey)
 	if err != nil {
 		return UnlockArticleResponse{}, err
 	}
@@ -166,15 +151,8 @@ func (s *Service) RedeemPrivilege(userID uint, req RedeemPrivilegeRequest) (Rede
 		return RedeemPrivilegeResponse{}, ErrPrivilegeNotFound
 	}
 
-	hasPrivilege, err := s.repo.HasPrivilege(userID, req.PrivilegeKey)
-	if err != nil {
-		return RedeemPrivilegeResponse{}, err
-	}
-	if hasPrivilege {
-		return RedeemPrivilegeResponse{}, ErrPrivilegeAlreadyRedeemed
-	}
-
-	balance, err := s.repo.RedeemPrivilege(userID, req.PrivilegeKey, cost)
+	operationKey := fmt.Sprintf("redeem_privilege:%d:%s", userID, req.PrivilegeKey)
+	balance, err := s.repo.RedeemPrivilegeWithKey(userID, req.PrivilegeKey, cost, operationKey)
 	if err != nil {
 		return RedeemPrivilegeResponse{}, err
 	}
