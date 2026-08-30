@@ -2,6 +2,15 @@ global:
   scrape_interval: 5s
   evaluation_interval: 5s
 
+# 告警链路：业务系统 -> Prometheus -> Alertmanager -> GoOnCall Agent
+# Alertmanager 运行在 GoOnCall-Agent 项目的 docker compose 中（宿主机 9093 端口），
+# 通过 host.docker.internal 跨网络访问（prometheus 服务需配置 extra_hosts）。
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - host.docker.internal:9093
+
 rule_files:
   - /etc/prometheus/alert.rules.yml
 

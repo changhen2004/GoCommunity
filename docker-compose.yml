@@ -140,6 +140,9 @@ services:
       - backend
     ports:
       - "9091:9090"
+    extra_hosts:
+      # 告警推送：跨网络访问 GoOnCall-Agent compose 中的 Alertmanager（宿主机 9093）。
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
