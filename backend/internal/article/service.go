@@ -12,6 +12,7 @@ import (
 	"resource_community_go/internal/cachekey"
 	internalMedia "resource_community_go/internal/media"
 	internalPoints "resource_community_go/internal/points"
+	"resource_community_go/internal/redislock"
 
 	"gorm.io/gorm"
 )
@@ -37,6 +38,7 @@ type Service struct {
 	repo          *Repo
 	publisher     asyncjob.Publisher
 	pointsService *internalPoints.Service
+	locker        *redislock.Locker // 跨实例回源合并用；Redis 不可用时为 nil（降级）
 	cacheFillMu   sync.Mutex
 	cacheFills    map[string]*articleDetailCacheFillCall
 }
@@ -55,6 +57,7 @@ func NewService(repo *Repo, publisher asyncjob.Publisher, pointsService *interna
 		repo:          repo,
 		publisher:     publisher,
 		pointsService: pointsService,
+		locker:        redislock.NewLocker(repo.Redis()),
 		cacheFills:    make(map[string]*articleDetailCacheFillCall),
 	}
 }
@@ -189,6 +192,10 @@ func (s *Service) CanAccessContentImage(url string, currentUserID uint) (bool, e
 	return s.resolveUnlockStatus(*article, currentUserID)
 }
 
+// articleDetailLockWait 回源锁自旋上限：超过后降级直接回源（可用性优先，
+// 只会在极端情况下短暂放大击穿窗口，不会阻塞服务）。
+const articleDetailLockWait = 2 * time.Second
+
 func (s *Service) GetDetail(id string, currentUserID uint) (ArticleDetailResponse, error) {
 	ctx := context.Background()
 
@@ -201,6 +208,22 @@ func (s *Service) GetDetail(id string, currentUserID uint) (ArticleDetailRespons
 	}
 
 	payload, err := s.doArticleDetailCacheFill(cacheKey, func() (articleDetailCachePayload, error) {
+		// 分布式收口（L2）：进程内 singleflight（doArticleDetailCacheFill）只保证
+		// 单实例内合并；多副本部署时每个实例都会有一个 leader 走到这里，
+		// 用 Redis 锁（SET NX PX + Lua 原子释放 + 看门狗续期）保证同一时刻
+		// 只有一个实例真正回源 MySQL 重建缓存。
+		if s.locker != nil {
+			lock, lockErr := s.locker.AcquireWithRetry(
+				ctx,
+				cachekey.ArticleDetailLockKey(id),
+				cachekey.ArticleDetailLockTTL,
+				articleDetailLockWait,
+			)
+			if lockErr == nil {
+				defer lock.Unlock()
+			}
+		}
+		// double-check：等锁期间其他实例可能已重建缓存，命中就直接复用
 		if payload, hit, err := s.getArticleDetailCachePayload(ctx, cacheKey); hit || err != nil {
 			return payload, err
 		}
