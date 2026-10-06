@@ -7,12 +7,15 @@ WORKDIR /app
 RUN go env -w GOPROXY=https://goproxy.cn,direct && \
     go env -w GOSUMDB=sum.golang.google.cn
 
-RUN apk add --no-cache git build-base
+RUN apk add --no-cache git
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+# 预热 GOCACHE：运行时 go run 直接命中镜像里的编译缓存，冷启动 17s -> <1s
+RUN go build ./...
 
 EXPOSE 3000
 
