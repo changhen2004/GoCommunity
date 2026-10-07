@@ -1,211 +1,178 @@
 <template>
-  <section class="catalog-shell">
-    <div class="catalog-layout">
-      <aside class="catalog-side">
-        <section class="side-panel">
-          <p class="side-kicker">当前筛选</p>
-          <div class="side-summary">
-            <article>
-              <span>页码</span>
-              <strong>{{ state.page }}</strong>
-            </article>
-            <article>
-              <span>结果数</span>
-              <strong>{{ resources.length }}</strong>
-            </article>
-          </div>
+  <PageLayout>
+    <template #aside>
+      <li v-for="feed in feedOptions" :key="feed.value">
+        <button
+          type="button"
+          class="aside-btn"
+          :class="{ 'is-active': state.feed === feed.value }"
+          @click="selectFeed(feed.value)"
+        >
+          <component :is="feed.icon" class="aside-ico" />
+          <span>{{ feed.label }}</span>
+        </button>
+      </li>
+      <li class="aside-divider"></li>
+      <li>
+        <button
+          type="button"
+          class="aside-btn"
+          :class="{ 'is-active': !state.tag }"
+          :disabled="state.feed === 'following'"
+          @click="selectTag('')"
+        >
+          <PriceTag class="aside-ico" />
+          <span>全部标签</span>
+        </button>
+      </li>
+      <li v-for="tag in availableTags" :key="tag">
+        <button
+          type="button"
+          class="aside-btn"
+          :class="{ 'is-active': state.tag === tag }"
+          :disabled="state.feed === 'following'"
+          @click="selectTag(tag)"
+        >
+          <PriceTag class="aside-ico" />
+          <span>#{{ tag }}</span>
+        </button>
+      </li>
+      <li v-if="!availableTags.length" class="aside-empty">当前页没有标签样本</li>
+    </template>
 
-          <div class="active-filters">
-            <button
-              v-if="state.feed"
-              type="button"
-              class="active-filter"
-              @click="navigateWithQuery({ feed: 'latest', page: 1 })"
-            >
-              {{ feedLabel }}
-            </button>
-            <button
-              v-if="state.keyword"
-              type="button"
-              class="active-filter"
-              @click="navigateWithQuery({ keyword: '', page: 1 })"
-            >
-              关键词: {{ state.keyword }}
-            </button>
-            <button
-              v-if="state.tag"
-              type="button"
-              class="active-filter"
-              @click="navigateWithQuery({ tag: '', page: 1 })"
-            >
-              标签: {{ state.tag }}
-            </button>
-          </div>
-        </section>
-
-        <section class="side-panel">
-          <p class="side-kicker">标签导航</p>
-          <div v-if="availableTags.length" class="side-tags">
-            <button
-              v-for="tag in availableTags"
-              :key="tag"
-              type="button"
-              :class="['side-tag', { 'side-tag--active': state.tag === tag }]"
-              @click="selectTag(tag)"
-            >
-              {{ tag }}
-            </button>
-          </div>
-          <p v-else class="side-empty">当前页还没有足够的标签样本</p>
-        </section>
-      </aside>
-
-      <div class="catalog-main">
-        <section class="catalog-hero">
-          <div>
-            <p class="catalog-kicker">RESOURCE CATALOG</p>
-            <h1>用更清晰的分层卡片浏览资源广场</h1>
-            <p class="catalog-copy">
-              支持关键词搜索、标签筛选、最新发布和热度优先排序，并把筛选条件同步到 URL，方便从首页分区直接进入。
-            </p>
-          </div>
-          <div class="catalog-hero__stats">
-            <article>
-              <span>排序方式</span>
-              <strong>{{ feedLabel }}</strong>
-            </article>
-            <article>
-              <span>每页数量</span>
-              <strong>{{ state.pageSize }}</strong>
-            </article>
-          </div>
-        </section>
-
-        <section class="toolbar-panel">
-          <div class="toolbar-top">
-            <el-input
-              v-model="draftKeyword"
-              class="search-box"
-              clearable
-              :disabled="state.feed === 'following'"
-              placeholder="搜索标题关键词"
-              @keyup.enter="applyFilters"
-            >
-              <template #append>
-                <el-button :disabled="state.feed === 'following'" @click="applyFilters">搜索</el-button>
-              </template>
-            </el-input>
-
-            <el-segmented
-              v-model="state.feed"
-              :options="feedOptions"
-              @change="onFeedChange"
-            />
-          </div>
-
-          <div class="toolbar-bottom">
-            <div class="filter-group">
-              <span class="filter-label">标签筛选</span>
-              <button
-                type="button"
-                :class="['filter-chip', { 'filter-chip--active': state.tag === '' }]"
-                :disabled="state.feed === 'following'"
-                @click="selectTag('')"
-              >
-                全部
-              </button>
-              <button
-                v-for="tag in availableTags"
-                :key="tag"
-                type="button"
-                :class="['filter-chip', { 'filter-chip--active': state.tag === tag }]"
-                :disabled="state.feed === 'following'"
-                @click="selectTag(tag)"
-              >
-                {{ tag }}
-              </button>
-            </div>
-
-            <el-select
-              v-model="state.pageSize"
-              class="page-size-select"
-              placeholder="每页数量"
-              @change="onPageSizeChange"
-            >
-              <el-option
-                v-for="size in pageSizeOptions"
-                :key="size"
-                :label="`${size} 条 / 页`"
-                :value="size"
-              />
-            </el-select>
-          </div>
-        </section>
-
-        <section v-if="loading" class="state-panel loading-grid">
-          <el-skeleton v-for="index in skeletonCount" :key="index" animated class="loading-card">
-            <template #template>
-              <el-skeleton-item variant="image" style="width: 100%; height: 220px" />
-              <div class="loading-copy">
-                <el-skeleton-item variant="h3" style="width: 54%" />
-                <el-skeleton-item variant="text" style="width: 92%" />
-                <el-skeleton-item variant="text" style="width: 82%" />
-              </div>
-            </template>
-          </el-skeleton>
-        </section>
-
-        <section v-else-if="errorMessage" class="state-panel">
-          <el-result icon="warning" title="加载失败" :sub-title="errorMessage">
-            <template #extra>
-              <el-button v-if="state.feed === 'following' && !authStore.isAuthenticated" type="primary" @click="goToLogin">
-                去登录
-              </el-button>
-              <el-button v-else type="primary" @click="fetchResources">重新加载</el-button>
-            </template>
-          </el-result>
-        </section>
-
-        <section v-else-if="!resources.length" class="state-panel">
-          <el-empty description="当前筛选条件下暂无内容">
-            <el-button @click="resetFilters">重置筛选</el-button>
-          </el-empty>
-        </section>
-
-        <section v-else class="resource-grid">
-          <ResourceStoryCard
-            v-for="resource in resources"
-            :key="resource.id"
-            :resource="resource"
-            @tag="selectTag"
-          />
-        </section>
-
-        <section class="pagination-bar">
-          <el-button :disabled="state.page === 1 || loading" @click="changePage(state.page - 1)">
-            上一页
-          </el-button>
-          <div class="page-indicator">
-            <span>第 {{ state.page }} 页</span>
-            <small v-if="!canGoNext">已到达最后一页</small>
-          </div>
-          <el-button
-            :disabled="!canGoNext"
-            @click="changePage(state.page + 1)"
-          >
-            下一页
-          </el-button>
-        </section>
+    <section class="content-card">
+      <div class="content-card__head">
+        <h4 class="tab-title is-active">
+          <Grid class="tab-title__icon" />
+          <span>{{ pageTitle }}</span>
+        </h4>
+        <div class="tab-to-more"></div>
+        <span class="text-muted text-xs">
+          第 {{ state.page }} 页 · 每页 {{ state.pageSize }} 条
+        </span>
       </div>
-    </div>
-  </section>
+
+      <div class="filter-bar">
+        <form class="search-box filter-bar__search" @submit.prevent="applyFilters">
+          <input
+            v-model.trim="draftKeyword"
+            type="search"
+            :disabled="state.feed === 'following'"
+            placeholder="搜索标题关键词"
+          />
+          <button
+            type="submit"
+            class="btn vc-theme"
+            :disabled="state.feed === 'following'"
+            aria-label="搜索"
+          >
+            <Search />
+          </button>
+        </form>
+
+        <div class="filter-bar__tags">
+          <button
+            type="button"
+            class="btn btn-sm"
+            :class="{ active: state.tag === '' }"
+            :disabled="state.feed === 'following'"
+            @click="selectTag('')"
+          >
+            全部
+          </button>
+          <button
+            v-for="tag in availableTags"
+            :key="tag"
+            type="button"
+            class="btn btn-sm"
+            :class="{ active: state.tag === tag }"
+            :disabled="state.feed === 'following'"
+            @click="selectTag(tag)"
+          >
+            {{ tag }}
+          </button>
+        </div>
+
+        <div class="filter-bar__size">
+          <button
+            v-for="size in pageSizeOptions"
+            :key="size"
+            type="button"
+            class="btn btn-sm"
+            :class="{ active: state.pageSize === size }"
+            @click="changePageSize(size)"
+          >
+            {{ size }} 条
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="content-card">
+      <div v-if="loading" class="card-grid card-grid--list">
+        <div v-for="index in state.pageSize" :key="index" class="posts-item posts-item--list">
+          <div class="item-media"></div>
+          <div class="item-body">
+            <el-skeleton :rows="3" animated />
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="errorMessage" class="empty-state">
+        <p>{{ errorMessage }}</p>
+        <button
+          v-if="state.feed === 'following' && !authStore.isAuthenticated"
+          type="button"
+          class="btn vc-theme"
+          @click="goToLogin"
+        >
+          去登录
+        </button>
+        <button v-else type="button" class="btn l-vc-theme" @click="fetchResources">
+          重新加载
+        </button>
+      </div>
+
+      <div v-else-if="!resources.length" class="empty-state">
+        <p>当前筛选条件下暂无内容</p>
+        <button type="button" class="btn l-vc-theme" @click="resetFilters">重置筛选</button>
+      </div>
+
+      <div v-else class="card-grid card-grid--list">
+        <ResourceStoryCard
+          v-for="resource in resources"
+          :key="resource.id"
+          :resource="resource"
+          variant="list"
+          @tag="selectTag"
+        />
+      </div>
+
+      <div v-if="!loading && !errorMessage && resources.length" class="pagination">
+        <button
+          type="button"
+          class="page-numbers"
+          :disabled="state.page === 1"
+          @click="changePage(state.page - 1)"
+        >
+          <ArrowLeft />
+        </button>
+        <span class="page-numbers is-current">{{ state.page }}</span>
+        <button type="button" class="page-numbers" :disabled="!canGoNext" @click="changePage(state.page + 1)">
+          <ArrowRight />
+        </button>
+      </div>
+    </section>
+  </PageLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { listArticles, listFollowingArticles } from '../api/article';
+import { ArrowLeft, ArrowRight, Clock, Grid, PriceTag, Search, Star, Trophy } from '@element-plus/icons-vue';
+import PageLayout from '../components/PageLayout.vue';
 import ResourceStoryCard from '../components/ResourceStoryCard.vue';
+import { listArticles, listFollowingArticles } from '../api/article';
 import { useAuthStore } from '../store/auth';
 import type { FollowingFeedCursor, ResourceSummary } from '../types/resource';
 
@@ -236,9 +203,9 @@ const state = reactive<CatalogState>({
 });
 
 const feedOptions = [
-  { label: '最新资源流', value: 'latest' },
-  { label: '关注流', value: 'following' },
-  { label: '热门资源流', value: 'hot' },
+  { label: '最新资源流', value: 'latest' as FeedMode, icon: Clock },
+  { label: '热门资源流', value: 'hot' as FeedMode, icon: Trophy },
+  { label: '我关注的作者', value: 'following' as FeedMode, icon: Star },
 ];
 
 const pageSizeOptions = [6, 12, 18];
@@ -256,13 +223,17 @@ const availableTags = computed(() => {
   return Array.from(tagSet);
 });
 
-const skeletonCount = computed(() => state.pageSize);
-
-const feedLabel = computed(() => {
+const pageTitle = computed(() => {
   if (state.feed === 'following') {
-    return '关注流';
+    return '我关注的作者';
   }
-  return state.feed === 'hot' ? '热门' : '最新';
+  if (state.keyword) {
+    return `搜索：${state.keyword}`;
+  }
+  if (state.tag) {
+    return `标签：${state.tag}`;
+  }
+  return state.feed === 'hot' ? '热门资源流' : '最新资源流';
 });
 
 const canGoNext = computed(() => {
@@ -289,24 +260,20 @@ const normalizeQuery = (query: Record<string, unknown>): CatalogState => {
   }
   return {
     page: feed === 'following' ? 1 : parsePositiveNumber(query.page, 1),
-    pageSize: [6, 12, 18].includes(Number(query.pageSize))
-      ? Number(query.pageSize)
-      : 6,
+    pageSize: [6, 12, 18].includes(Number(query.pageSize)) ? Number(query.pageSize) : 6,
     feed,
     keyword: feed === 'following' ? '' : typeof query.keyword === 'string' ? query.keyword : '',
     tag: feed === 'following' ? '' : typeof query.tag === 'string' ? query.tag : '',
   };
 };
 
-const buildRouteQuery = (nextState: CatalogState) => {
-  return {
-    ...(nextState.page > 1 ? { page: String(nextState.page) } : {}),
-    ...(nextState.pageSize !== 6 ? { pageSize: String(nextState.pageSize) } : {}),
-    ...(nextState.feed !== 'latest' ? { feed: nextState.feed } : {}),
-    ...(nextState.keyword ? { keyword: nextState.keyword } : {}),
-    ...(nextState.tag ? { tag: nextState.tag } : {}),
-  };
-};
+const buildRouteQuery = (nextState: CatalogState) => ({
+  ...(nextState.page > 1 ? { page: String(nextState.page) } : {}),
+  ...(nextState.pageSize !== 6 ? { pageSize: String(nextState.pageSize) } : {}),
+  ...(nextState.feed !== 'latest' ? { feed: nextState.feed } : {}),
+  ...(nextState.keyword ? { keyword: nextState.keyword } : {}),
+  ...(nextState.tag ? { tag: nextState.tag } : {}),
+});
 
 const fetchResources = async () => {
   loading.value = true;
@@ -347,25 +314,15 @@ const fetchResources = async () => {
 };
 
 const navigateWithQuery = (patch: Partial<CatalogState>) => {
-  const nextState: CatalogState = {
-    ...state,
-    ...patch,
-  };
-
-  router.replace({
-    name: 'Resources',
-    query: buildRouteQuery(nextState),
-  });
+  const nextState: CatalogState = { ...state, ...patch };
+  router.replace({ name: 'Resources', query: buildRouteQuery(nextState) });
 };
 
 const applyFilters = () => {
   if (state.feed === 'following') {
     return;
   }
-  navigateWithQuery({
-    page: 1,
-    keyword: draftKeyword.value.trim(),
-  });
+  navigateWithQuery({ page: 1, keyword: draftKeyword.value.trim() });
 };
 
 const resetFilters = () => {
@@ -378,28 +335,23 @@ const selectTag = (tag: string) => {
   if (state.feed === 'following') {
     return;
   }
+  navigateWithQuery({ page: 1, tag });
+};
+
+const selectFeed = (feed: FeedMode) => {
+  followingCursors.value = { 1: undefined };
+  state.feed = feed;
   navigateWithQuery({
     page: 1,
-    tag,
+    feed,
+    keyword: feed === 'following' ? '' : state.keyword,
+    tag: feed === 'following' ? '' : state.tag,
   });
 };
 
-const onFeedChange = () => {
+const changePageSize = (size: number) => {
   followingCursors.value = { 1: undefined };
-  navigateWithQuery({
-    page: 1,
-    feed: state.feed,
-    keyword: state.feed === 'following' ? '' : state.keyword,
-    tag: state.feed === 'following' ? '' : state.tag,
-  });
-};
-
-const onPageSizeChange = () => {
-  followingCursors.value = { 1: undefined };
-  navigateWithQuery({
-    page: 1,
-    pageSize: state.pageSize,
-  });
+  navigateWithQuery({ page: 1, pageSize: size });
 };
 
 const changePage = (page: number) => {
@@ -409,7 +361,6 @@ const changePage = (page: number) => {
   if (state.feed === 'following' && page > state.page && !followingCursors.value[page]) {
     return;
   }
-
   navigateWithQuery({ page });
 };
 
@@ -434,307 +385,74 @@ watch(
 </script>
 
 <style scoped>
-.catalog-shell {
-  padding: 28px 24px 64px;
+.aside-ico {
+  width: 15px;
+  height: 15px;
+  color: var(--theme-color);
 }
 
-.catalog-layout {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 24px;
-  max-width: 1440px;
-  margin: 0 auto;
+.aside-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--muted-bg-color);
+  list-style: none;
 }
 
-.catalog-side {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.side-panel,
-.catalog-hero,
-.toolbar-panel,
-.state-panel {
-  border: 1px solid rgba(56, 61, 64, 0.08);
-  border-radius: 24px;
-  background: rgba(251, 250, 245, 0.96);
-  box-shadow: 0 8px 28px rgba(45, 51, 54, 0.06);
-}
-
-.catalog-hero,
-.toolbar-panel,
-.state-panel {
-  contain: layout paint;
-}
-
-.side-panel {
-  position: sticky;
-  top: 108px;
-  padding: 20px;
-  contain: layout;
-}
-
-.side-kicker,
-.catalog-kicker {
-  margin: 0;
-  color: #7c6843;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.side-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.side-summary article {
-  padding: 14px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #f5efe0, #f8f6f0);
-}
-
-.side-summary span {
-  display: block;
-  color: #7a6b55;
-  font-size: 12px;
-}
-
-.side-summary strong {
-  display: block;
-  margin-top: 10px;
-  color: #152f35;
-  font-size: 24px;
-}
-
-.active-filters,
-.side-tags {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 16px;
-}
-
-.active-filter,
-.side-tag,
-.filter-chip {
-  border: 0;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.active-filter {
-  padding: 8px 12px;
-  background: #e7efee;
-  color: #1b434a;
-  font-size: 12px;
-}
-
-.side-tag,
-.filter-chip {
-  padding: 8px 14px;
-  background: #eef3f2;
-  color: #224b53;
+.aside-empty {
+  padding: 8px 9px;
+  color: var(--muted-color);
   font-size: 13px;
+  list-style: none;
 }
 
-.side-tag--active,
-.filter-chip--active {
-  background: #183f44;
-  color: #f7f4eb;
+.aside-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.side-empty {
-  margin: 14px 0 0;
-  color: #6a757a;
-  line-height: 1.7;
-}
-
-.catalog-main {
+.filter-bar {
   display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-
-.catalog-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(240px, 0.7fr);
-  gap: 20px;
-  align-items: end;
-  padding: 26px;
-}
-
-.catalog-hero h1 {
-  margin: 12px 0 0;
-  color: #152f35;
-  font-size: clamp(34px, 5vw, 56px);
-  line-height: 1.04;
-}
-
-.catalog-copy {
-  max-width: 720px;
-  margin: 18px 0 0;
-  color: #5c696d;
-  line-height: 1.8;
-}
-
-.catalog-hero__stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.catalog-hero__stats article {
-  padding: 18px;
-  border-radius: 20px;
-  background: linear-gradient(180deg, #f5efe0, #f8f6f0);
-}
-
-.catalog-hero__stats span {
-  display: block;
-  color: #7a6b55;
-  font-size: 12px;
-}
-
-.catalog-hero__stats strong {
-  display: block;
-  margin-top: 10px;
-  color: #152f35;
-  font-size: 26px;
-}
-
-.toolbar-panel {
-  padding: 20px;
-}
-
-.toolbar-top,
-.toolbar-bottom {
-  display: flex;
-  gap: 18px;
-  align-items: center;
-}
-
-.toolbar-bottom {
-  margin-top: 18px;
-  justify-content: space-between;
-}
-
-.search-box {
-  flex: 1;
-}
-
-.filter-group {
-  display: flex;
-  gap: 10px;
-  align-items: center;
   flex-wrap: wrap;
-}
-
-.filter-label {
-  color: #57666b;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.page-size-select {
-  width: 140px;
-}
-
-.resource-grid,
-.loading-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-}
-
-.loading-card {
-  overflow: hidden;
-  border-radius: 24px;
-}
-
-.loading-copy {
-  display: flex;
-  flex-direction: column;
   gap: 10px;
-  padding: 20px;
-}
-
-.pagination-bar {
-  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 18px;
-  padding: 6px 0;
+  margin-bottom: 12px;
 }
 
-.page-indicator {
+.filter-bar__search {
+  flex: 1 1 240px;
+  max-width: 340px;
+}
+
+.filter-bar__tags,
+.filter-bar__size {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
-  color: #4f5d63;
 }
 
-.page-indicator small {
-  color: #8b7760;
+.filter-bar__size {
+  margin-left: auto;
 }
 
-@media (max-width: 1180px) {
-  .catalog-layout {
-    grid-template-columns: 1fr;
-  }
+.card-grid--list {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
 
-  .catalog-side {
-    order: 2;
-  }
-
-  .side-panel {
-    position: static;
-  }
-
-  .catalog-hero,
-  .resource-grid,
-  .loading-grid {
+@media (min-width: 992px) {
+  .card-grid--list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .catalog-hero > :first-child {
-    grid-column: 1 / -1;
-  }
 }
 
-@media (max-width: 720px) {
-  .catalog-shell {
-    padding: 18px 12px 40px;
-  }
+.posts-item--list .item-body :deep(.el-skeleton) {
+  --el-skeleton-color: var(--muted-bg-color);
+  --el-skeleton-to-color: var(--muted-bg-color-l);
+}
 
-  .catalog-hero,
-  .toolbar-panel,
-  .state-panel,
-  .side-panel {
-    padding: 18px;
-    border-radius: 20px;
-  }
-
-  .toolbar-top,
-  .toolbar-bottom,
-  .pagination-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .catalog-hero,
-  .catalog-hero__stats,
-  .resource-grid,
-  .loading-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .page-size-select {
-    width: 100%;
-  }
+.page-numbers :deep(svg),
+.page-numbers svg {
+  width: 14px;
+  height: 14px;
 }
 </style>

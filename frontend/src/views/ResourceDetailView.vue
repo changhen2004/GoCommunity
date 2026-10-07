@@ -1,9 +1,105 @@
 <template>
-  <section class="detail-shell">
-    <section v-if="loading" class="detail-skeleton">
+  <PageLayout>
+    <template v-if="resource" #aside>
+      <li class="aside-block">
+        <h5 class="aside-title">
+          <Lock class="tab-title__icon" />
+          <span>访问规则</span>
+        </h5>
+        <p class="gate-status" :class="gateState.className">{{ gateState.label }}</p>
+        <p class="gate-copy">{{ gateState.description }}</p>
+
+        <div class="stat-item points-item">
+          <span>当前积分</span>
+          <strong>{{ authStore.pointsBalance }}</strong>
+        </div>
+
+        <button
+          v-if="shouldShowUnlockButton"
+          type="button"
+          class="btn vc-theme btn-block widget-btn"
+          :disabled="unlocking"
+          @click="handleUnlock"
+        >
+          <Unlock />
+          <span>{{ unlocking ? '解锁中…' : `使用 ${resource.requiredPoints || 0} 积分解锁` }}</span>
+        </button>
+
+        <button
+          v-else-if="!authStore.isAuthenticated"
+          type="button"
+          class="btn l-vc-theme btn-block widget-btn"
+          @click="redirectToLogin"
+        >
+          <SwitchButton />
+          <span>登录后查看权限</span>
+        </button>
+      </li>
+
+      <li class="aside-block">
+        <h5 class="aside-title">
+          <Histogram class="tab-title__icon" />
+          <span>互动统计</span>
+        </h5>
+        <div class="stat-grid">
+          <div class="stat-item">
+            <span>点赞</span>
+            <strong>{{ likes }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>浏览</span>
+            <strong>{{ resource.stats?.viewCount ?? resource.viewCount ?? 0 }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>评论</span>
+            <strong>{{ resource.stats?.commentCount ?? resource.commentCount ?? 0 }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>收藏</span>
+            <strong>{{ resource.stats?.favoriteCount ?? resource.favoriteCount ?? 0 }}</strong>
+          </div>
+        </div>
+
+        <div class="widget-actions">
+          <button type="button" class="btn l-vc-theme btn-block" @click="handleLikeResource">
+            <Star />
+            <span>点赞资源</span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-block"
+            :class="isFavorited ? 'vc-red' : 'j-vc-green'"
+            :disabled="favoriteSubmitting"
+            @click="handleFavoriteToggle"
+          >
+            <Collection />
+            <span>{{ isFavorited ? '取消收藏' : '收藏资源' }}</span>
+          </button>
+        </div>
+      </li>
+
+      <li v-if="resource.tags?.length" class="aside-block">
+        <h5 class="aside-title">
+          <PriceTag class="tab-title__icon" />
+          <span>标签入口</span>
+        </h5>
+        <button
+          v-for="tag in resource.tags"
+          :key="tag"
+          type="button"
+          class="aside-btn"
+          @click="goToTag(tag)"
+        >
+          <PriceTag class="aside-ico" />
+          <span class="line1">#{{ tag }}</span>
+        </button>
+      </li>
+    </template>
+
+    <section v-if="loading" class="content-card">
       <el-skeleton animated>
         <template #template>
-          <el-skeleton-item variant="image" style="width: 100%; height: 360px" />
+          <el-skeleton-item variant="image" style="width: 100%; height: 300px" />
           <div class="skeleton-stack">
             <el-skeleton-item variant="h1" style="width: 54%" />
             <el-skeleton-item variant="text" style="width: 92%" />
@@ -14,342 +110,274 @@
       </el-skeleton>
     </section>
 
-    <section v-else-if="errorMessage" class="state-panel">
+    <section v-else-if="errorMessage" class="content-card">
       <el-result icon="warning" title="资源加载失败" :sub-title="errorMessage">
         <template #extra>
-          <el-button type="primary" @click="fetchPageData">重新加载</el-button>
+          <button type="button" class="btn vc-theme" @click="fetchPageData">重新加载</button>
         </template>
       </el-result>
     </section>
 
-    <section v-else-if="resource" class="detail-layout">
-      <article class="detail-main">
-        <section class="hero-panel">
-          <div class="hero-cover-wrap">
-            <img
-              v-if="resource.coverUrl"
-              :src="resource.coverUrl"
-              :alt="resource.title"
-              class="hero-cover"
-              decoding="async"
-            />
-            <div v-else class="hero-cover hero-cover--placeholder">
-              <span>{{ resource.title.slice(0, 1) }}</span>
-            </div>
-            <div class="hero-cover__shade"></div>
-
-            <div class="hero-topbar">
-              <button type="button" class="ghost-link" @click="goBackToList">
-                返回资源广场
-              </button>
-              <div class="hero-topbar__meta">
-                <span>{{ resource.status || 'published' }}</span>
-                <strong>{{ resource.isFree ? '免费资源' : `${resource.requiredPoints || 0} 积分解锁` }}</strong>
-              </div>
-            </div>
-
-            <div class="hero-body">
-              <p class="hero-kicker">RESOURCE STORY</p>
-              <h1>{{ resource.title }}</h1>
-              <p class="hero-preview">{{ resource.preview }}</p>
-
-              <div v-if="resource.tags?.length" class="hero-tags">
-                <button
-                  v-for="tag in resource.tags"
-                  :key="tag"
-                  type="button"
-                  class="hero-tag"
-                  @click="goToTag(tag)"
-                >
-                  {{ tag }}
-                </button>
-              </div>
-
-              <div class="hero-meta-grid">
-                <article class="hero-meta-card">
-                  <span>作者</span>
-                  <strong>{{ resource.author?.username || '匿名作者' }}</strong>
-                </article>
-                <article class="hero-meta-card">
-                  <span>可见性</span>
-                  <strong>{{ resource.isFree ? '公开阅读' : '积分门槛' }}</strong>
-                </article>
-                <article class="hero-meta-card">
-                  <span>互动热度</span>
-                  <strong>{{ likes }}</strong>
-                </article>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="summary-panel">
-          <div class="author-card">
-            <div class="author-avatar">
-              {{ resource.author?.username?.slice(0, 1) || 'U' }}
-            </div>
-            <div class="author-copy">
-              <p class="summary-kicker">Author</p>
-              <h2>{{ resource.author?.username || '匿名作者' }}</h2>
-              <span>作者 ID #{{ resource.author?.id || resource.authorId }}</span>
-            </div>
-            <el-button
-              v-if="canShowFollowButton"
-              class="follow-button"
-              :type="authorSocialStatus?.isFollowing ? 'default' : 'primary'"
-              :loading="followSubmitting"
-              @click="handleFollowToggle"
-            >
-              {{ authorSocialStatus?.isFollowing ? '取消关注' : '关注作者' }}
-            </el-button>
-          </div>
-
-          <div class="summary-divider"></div>
-
-          <div class="summary-grid">
-            <article>
-              <span>浏览</span>
-              <strong>{{ resource.stats?.viewCount ?? resource.viewCount ?? 0 }}</strong>
-            </article>
-            <article>
-              <span>评论</span>
-              <strong>{{ resource.stats?.commentCount ?? resource.commentCount ?? 0 }}</strong>
-            </article>
-            <article>
-              <span>粉丝</span>
-              <strong>{{ authorSocialStatus?.followerCount ?? 0 }}</strong>
-            </article>
-            <article>
-              <span>关注</span>
-              <strong>{{ authorSocialStatus?.followingCount ?? 0 }}</strong>
-            </article>
-          </div>
-        </section>
-
-        <section class="reading-panel">
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">Article</p>
-              <h2>资源正文</h2>
-            </div>
-            <button
-              v-if="resource.tags?.[0]"
-              type="button"
-              class="ghost-link"
-              @click="goToTag(resource.tags[0])"
-            >
-              查看同标签内容
-            </button>
-          </div>
-
-          <p class="body-copy">{{ resource.content }}</p>
-
-          <div v-if="resource.contentImages?.length" class="content-gallery">
-            <img
-              v-for="(image, index) in resource.contentImages"
-              :key="`${image}-${index}`"
-              :src="image"
-              :alt="`${resource.title} 配图 ${index + 1}`"
-              loading="lazy"
-              decoding="async"
-            />
-          </div>
-        </section>
-
-        <section v-if="relatedResources.length" class="related-panel">
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">More Like This</p>
-              <h2>相关资源</h2>
-            </div>
-            <button type="button" class="ghost-link" @click="goBackToList">
-              浏览更多
-            </button>
-          </div>
-
-          <div class="related-grid">
-            <ResourceStoryCard
-              v-for="item in relatedResources"
-              :key="item.id"
-              :resource="item"
-              variant="compact"
-              @tag="goToTag"
-            />
-          </div>
-        </section>
-
-        <section class="comment-panel">
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">Comments</p>
-              <h2>评论区</h2>
-            </div>
-            <el-button text :loading="commentLoading" @click="fetchComments">刷新</el-button>
-          </div>
-
-          <div v-if="authStore.isAuthenticated" class="comment-editor">
-            <el-input
-              v-model="commentForm"
-              type="textarea"
-              :rows="4"
-              maxlength="1000"
-              show-word-limit
-              placeholder="写下你的评论，分享你对这个资源的看法。"
-            />
-            <div class="comment-editor__actions">
-              <span class="comment-editor__hint">登录用户可以参与讨论并推动内容热度上升。</span>
-              <el-button
-                type="primary"
-                :loading="commentSubmitting"
-                :disabled="!commentForm.trim()"
-                @click="handleCreateComment"
-              >
-                发布评论
-              </el-button>
-            </div>
-          </div>
-          <el-alert
-            v-else
-            type="info"
-            :closable="false"
-            show-icon
-            title="登录后可以发表评论并参与互动"
+    <template v-else-if="resource">
+      <section class="content-card detail-hero">
+        <div class="item-media detail-cover">
+          <img
+            v-if="resource.coverUrl"
+            :src="resource.coverUrl"
+            :alt="resource.title"
+            decoding="async"
           />
+          <div v-else class="item-media__placeholder">{{ resource.title.slice(0, 1) }}</div>
+        </div>
 
-          <div v-if="commentLoading" class="comment-loading">
-            <el-skeleton :rows="3" animated />
-          </div>
-          <el-result
-            v-else-if="commentErrorMessage"
-            icon="warning"
-            title="评论加载失败"
-            :sub-title="commentErrorMessage"
-          >
-            <template #extra>
-              <el-button @click="fetchComments">重试</el-button>
-            </template>
-          </el-result>
-          <el-empty v-else-if="!comments.length" description="还没有评论，来发表第一条观点" />
-          <div v-else class="comment-list">
-            <article v-for="comment in comments" :key="comment.id" class="comment-item">
-              <div class="comment-item__head">
-                <div>
-                  <strong>{{ comment.author.username }}</strong>
-                  <span class="comment-item__time">{{ formatDate(comment.createdAt) }}</span>
-                </div>
-                <el-button
-                  v-if="canDeleteComment(comment.userId)"
-                  text
-                  type="danger"
-                  :loading="deletingCommentId === comment.id"
-                  @click="handleDeleteComment(comment.id)"
-                >
-                  删除
-                </el-button>
-              </div>
-              <p class="comment-item__content">{{ comment.content }}</p>
-            </article>
-          </div>
-        </section>
-      </article>
-
-      <aside class="detail-sidebar">
-        <section class="sidebar-panel sidebar-panel--sticky">
-          <p class="section-kicker">Access</p>
-          <h2>访问规则</h2>
-          <p class="gate-status" :class="gateState.className">
-            {{ gateState.label }}
-          </p>
-          <p class="gate-copy">{{ gateState.description }}</p>
-
-          <div class="points-card">
-            <span>当前积分</span>
-            <strong>{{ authStore.pointsBalance }}</strong>
-          </div>
-
-          <el-button
-            v-if="shouldShowUnlockButton"
-            type="primary"
-            class="unlock-button"
-            :loading="unlocking"
-            @click="handleUnlock"
-          >
-            使用 {{ resource.requiredPoints || 0 }} 积分解锁
-          </el-button>
-
-          <el-button
-            v-else-if="!authStore.isAuthenticated"
-            class="unlock-button"
-            @click="redirectToLogin"
-          >
-            登录后查看权限
-          </el-button>
-        </section>
-
-        <section class="sidebar-panel">
-          <p class="section-kicker">Engagement</p>
-          <h2>互动统计</h2>
-          <div class="stats-grid">
-            <div class="stat-item">
-              <span>点赞</span>
-              <strong>{{ likes }}</strong>
-            </div>
-            <div class="stat-item">
-              <span>浏览</span>
-              <strong>{{ resource.stats?.viewCount ?? resource.viewCount ?? 0 }}</strong>
-            </div>
-            <div class="stat-item">
-              <span>评论</span>
-              <strong>{{ resource.stats?.commentCount ?? resource.commentCount ?? 0 }}</strong>
-            </div>
-            <div class="stat-item">
-              <span>收藏</span>
-              <strong>{{ resource.stats?.favoriteCount ?? resource.favoriteCount ?? 0 }}</strong>
+        <div class="detail-hero__body">
+          <div class="detail-hero__bar">
+            <button type="button" class="btn btn-sm" @click="goBackToList">
+              <ArrowLeft />
+              <span>返回资源广场</span>
+            </button>
+            <div class="detail-chips">
+              <span class="badge">{{ resource.status || 'published' }}</span>
+              <span class="badge" :class="resource.isFree ? 'j-vc-green' : 'j-vc-yellow'">
+                {{ resource.isFree ? '免费资源' : `${resource.requiredPoints || 0} 积分解锁` }}
+              </span>
             </div>
           </div>
 
-          <el-button type="primary" plain class="action-button" @click="handleLikeResource">
-            点赞资源
-          </el-button>
-          <el-button
-            class="action-button"
-            :type="isFavorited ? 'danger' : 'success'"
-            plain
-            :loading="favoriteSubmitting"
-            @click="handleFavoriteToggle"
-          >
-            {{ isFavorited ? '取消收藏' : '收藏资源' }}
-          </el-button>
-        </section>
+          <h1 class="detail-title">{{ resource.title }}</h1>
+          <p class="detail-preview">{{ resource.preview }}</p>
 
-        <section v-if="resource.tags?.length" class="sidebar-panel">
-          <p class="section-kicker">Topics</p>
-          <h2>标签入口</h2>
-          <div class="sidebar-tags">
+          <div class="item-meta detail-meta">
+            <span>
+              <User />
+              {{ resource.author?.username || '匿名作者' }}
+            </span>
+            <span>
+              <Lock />
+              {{ resource.isFree ? '公开阅读' : '积分门槛' }}
+            </span>
+            <span>
+              <Star />
+              {{ likes }}
+            </span>
+          </div>
+
+          <div v-if="resource.tags?.length" class="detail-tags">
             <button
               v-for="tag in resource.tags"
               :key="tag"
               type="button"
-              class="sidebar-tag"
+              class="badge l-vc-theme"
               @click="goToTag(tag)"
             >
-              {{ tag }}
+              #{{ tag }}
             </button>
           </div>
-        </section>
-      </aside>
-    </section>
+        </div>
+      </section>
 
-    <section v-else class="state-panel">
+      <section class="content-card">
+        <div class="author-row">
+          <div class="author-avatar">{{ resource.author?.username?.slice(0, 1) || 'U' }}</div>
+          <div class="author-copy">
+            <strong>{{ resource.author?.username || '匿名作者' }}</strong>
+            <span class="text-muted text-xs">
+              作者 ID #{{ resource.author?.id || resource.authorId }}
+            </span>
+          </div>
+          <button
+            v-if="canShowFollowButton"
+            type="button"
+            class="btn btn-sm"
+            :class="authorSocialStatus?.isFollowing ? '' : 'vc-theme'"
+            :disabled="followSubmitting"
+            @click="handleFollowToggle"
+          >
+            <Star />
+            <span>{{ authorSocialStatus?.isFollowing ? '取消关注' : '关注作者' }}</span>
+          </button>
+        </div>
+
+        <div class="stat-grid summary-stats">
+          <div class="stat-item">
+            <span>浏览</span>
+            <strong>{{ resource.stats?.viewCount ?? resource.viewCount ?? 0 }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>评论</span>
+            <strong>{{ resource.stats?.commentCount ?? resource.commentCount ?? 0 }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>粉丝</span>
+            <strong>{{ authorSocialStatus?.followerCount ?? 0 }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>关注</span>
+            <strong>{{ authorSocialStatus?.followingCount ?? 0 }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="content-card">
+        <div class="content-card__head">
+          <h4 class="tab-title">
+            <Reading class="tab-title__icon" />
+            <span>资源正文</span>
+          </h4>
+          <div class="tab-to-more"></div>
+          <button
+            v-if="resource.tags?.[0]"
+            type="button"
+            class="btn-more"
+            @click="goToTag(resource.tags[0])"
+          >
+            查看同标签内容
+          </button>
+        </div>
+
+        <p class="body-copy">{{ resource.content }}</p>
+
+        <div v-if="resource.contentImages?.length" class="content-gallery">
+          <img
+            v-for="(image, index) in resource.contentImages"
+            :key="`${image}-${index}`"
+            :src="image"
+            :alt="`${resource.title} 配图 ${index + 1}`"
+            loading="lazy"
+            decoding="async"
+          />
+        </div>
+      </section>
+
+      <section v-if="relatedResources.length" class="content-card">
+        <div class="content-card__head">
+          <h4 class="tab-title">
+            <CollectionTag class="tab-title__icon" />
+            <span>相关资源</span>
+          </h4>
+          <div class="tab-to-more"></div>
+          <button type="button" class="btn-more" @click="goBackToList">浏览更多</button>
+        </div>
+
+        <div class="card-grid related-grid">
+          <ResourceStoryCard
+            v-for="item in relatedResources"
+            :key="item.id"
+            :resource="item"
+            variant="card"
+            @tag="goToTag"
+          />
+        </div>
+      </section>
+
+      <section class="content-card">
+        <div class="content-card__head">
+          <h4 class="tab-title">
+            <ChatDotRound class="tab-title__icon" />
+            <span>评论区</span>
+          </h4>
+          <div class="tab-to-more"></div>
+          <button type="button" class="btn-more" :disabled="commentLoading" @click="fetchComments">
+            刷新
+          </button>
+        </div>
+
+        <div v-if="authStore.isAuthenticated" class="comment-editor">
+          <textarea
+            v-model="commentForm"
+            class="form-control"
+            rows="4"
+            maxlength="1000"
+            placeholder="写下你的评论，分享你对这个资源的看法。"
+          ></textarea>
+          <div class="comment-editor__actions">
+            <span class="text-muted text-xs">
+              {{ commentForm.length }}/1000 · 登录用户可以参与讨论并推动内容热度上升。
+            </span>
+            <button
+              type="button"
+              class="btn vc-theme"
+              :disabled="commentSubmitting || !commentForm.trim()"
+              @click="handleCreateComment"
+            >
+              <ChatDotRound />
+              <span>{{ commentSubmitting ? '发布中…' : '发布评论' }}</span>
+            </button>
+          </div>
+        </div>
+        <div v-else class="comment-guest">
+          <span>登录后可以发表评论并参与互动</span>
+          <button type="button" class="btn btn-sm l-vc-theme" @click="redirectToLogin">
+            <SwitchButton />
+            <span>去登录</span>
+          </button>
+        </div>
+
+        <div v-if="commentLoading" class="comment-loading">
+          <el-skeleton :rows="3" animated />
+        </div>
+        <el-result
+          v-else-if="commentErrorMessage"
+          icon="warning"
+          title="评论加载失败"
+          :sub-title="commentErrorMessage"
+        >
+          <template #extra>
+            <button type="button" class="btn vc-theme" @click="fetchComments">重试</button>
+          </template>
+        </el-result>
+        <el-empty v-else-if="!comments.length" description="还没有评论，来发表第一条观点" />
+        <div v-else class="comment-list">
+          <article v-for="comment in comments" :key="comment.id" class="comment-item">
+            <div class="comment-item__head">
+              <div>
+                <strong>{{ comment.author.username }}</strong>
+                <span class="comment-item__time text-muted text-xs">
+                  {{ formatDate(comment.createdAt) }}
+                </span>
+              </div>
+              <button
+                v-if="canDeleteComment(comment.userId)"
+                type="button"
+                class="btn btn-sm vc-red"
+                :disabled="deletingCommentId === comment.id"
+                @click="handleDeleteComment(comment.id)"
+              >
+                <Delete />
+                <span>{{ deletingCommentId === comment.id ? '删除中' : '删除' }}</span>
+              </button>
+            </div>
+            <p class="comment-item__content">{{ comment.content }}</p>
+          </article>
+        </div>
+      </section>
+    </template>
+
+    <section v-else class="content-card">
       <el-empty description="资源不存在或暂时不可用" />
     </section>
-  </section>
+  </PageLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import {
+  ArrowLeft,
+  ChatDotRound,
+  Collection,
+  CollectionTag,
+  Delete,
+  Histogram,
+  Lock,
+  PriceTag,
+  Reading,
+  Star,
+  SwitchButton,
+  Unlock,
+  User,
+} from '@element-plus/icons-vue';
 import {
   followAuthor,
   getArticleDetail,
@@ -362,6 +390,7 @@ import {
 import { createComment, deleteComment, listComments, type Comment } from '../api/comment';
 import { favoriteArticle, listMyFavorites, unfavoriteArticle } from '../api/favorite';
 import { unlockArticle } from '../api/points';
+import PageLayout from '../components/PageLayout.vue';
 import ResourceStoryCard from '../components/ResourceStoryCard.vue';
 import { useAuthStore } from '../store/auth';
 import type { AuthorSocialStatus, ResourceDetail, ResourceSummary } from '../types/resource';
@@ -677,531 +706,314 @@ onMounted(fetchPageData);
 </script>
 
 <style scoped>
-.detail-shell {
-  padding: 28px 24px 64px;
+/* theme.css ships default-state Element Plus styles; the rest is page layout. */
+.content-card {
+  padding: 20px;
+  border-radius: var(--main-radius);
+  background: var(--main-bg-color);
+  transition: background-color 0.3s;
 }
 
-.detail-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.78fr);
-  gap: 24px;
-  max-width: 1440px;
-  margin: 0 auto;
+.aside-ico {
+  width: 15px;
+  height: 15px;
+  color: var(--theme-color);
 }
 
-.detail-main,
-.detail-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+.aside-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.detail-skeleton,
-.state-panel,
-.hero-panel,
-.summary-panel,
-.reading-panel,
-.related-panel,
-.comment-panel,
-.sidebar-panel {
-  border: 1px solid rgba(56, 61, 64, 0.08);
-  border-radius: 26px;
-  background: rgba(251, 250, 245, 0.96);
-  box-shadow: 0 8px 28px rgba(45, 51, 54, 0.06);
-}
-
-.detail-skeleton,
-.state-panel,
-.hero-panel,
-.summary-panel,
-.reading-panel,
-.related-panel,
-.comment-panel {
-  contain: layout paint;
-}
-
-.sidebar-panel {
-  contain: layout;
-}
-
-.detail-skeleton,
-.state-panel {
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.skeleton-stack {
-  display: grid;
-  gap: 14px;
-  margin-top: 20px;
-}
-
-.hero-cover-wrap {
-  position: relative;
-  min-height: 360px;
-  border-radius: 26px;
+/* ------------------------------------------------------------------ hero */
+.detail-hero {
+  padding: 0;
   overflow: hidden;
-  background:
-    linear-gradient(140deg, rgba(19, 63, 69, 0.92), rgba(124, 99, 55, 0.86)),
-    #244;
 }
 
-.hero-cover {
-  display: block;
-  width: 100%;
-  height: auto;
+.detail-cover {
+  padding-bottom: 44%;
 }
 
-.hero-cover--placeholder {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 16 / 9.5;
-  width: 100%;
-  color: rgba(247, 243, 233, 0.95);
-  font-size: clamp(64px, 10vw, 110px);
-  font-weight: 700;
+.detail-hero__body {
+  padding: 14px 20px 20px;
 }
 
-.hero-cover__shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(16, 21, 24, 0.12), rgba(16, 21, 24, 0.7));
-}
-
-.hero-topbar,
-.section-head {
+.detail-hero__bar {
   display: flex;
-  gap: 16px;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
 }
 
-.hero-topbar {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 2;
-  padding: 28px;
-}
-
-.hero-body {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 2;
-  padding: 0 28px 28px;
-  color: #f7f4eb;
-}
-
-.ghost-link,
-.hero-tag,
-.sidebar-tag {
-  border: 0;
-  cursor: pointer;
-}
-
-.ghost-link {
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: rgba(251, 250, 245, 0.88);
-  color: #1a3a40;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.hero-topbar__meta {
-  display: inline-flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: rgba(16, 21, 24, 0.66);
-}
-
-.hero-topbar__meta span,
-.hero-topbar__meta strong {
-  font-size: 12px;
-}
-
-.hero-kicker,
-.summary-kicker,
-.section-kicker {
-  margin: 0;
-  color: #c9b589;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.hero-body h1 {
-  margin: 0;
-  color: #f7f4eb;
-  font-size: clamp(34px, 5vw, 58px);
-  line-height: 1.04;
-}
-
-.hero-preview {
-  max-width: 760px;
-  margin: 16px 0 0;
-  color: rgba(247, 243, 233, 0.88);
-  line-height: 1.8;
-}
-
-.hero-tags,
-.sidebar-tags {
+.detail-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 20px;
+  gap: 4px;
 }
 
-.hero-tag,
-.sidebar-tag {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(251, 250, 245, 0.15);
-  color: #f7f4eb;
-  font-size: 12px;
+.detail-title {
+  margin: 12px 0 0;
+  color: var(--main-color);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
-.sidebar-tag {
-  background: #edf2f1;
-  color: #1d4046;
+.detail-preview {
+  margin: 8px 0 0;
+  color: var(--muted-color2);
+  font-size: 15px;
+  line-height: 1.75;
 }
 
-.hero-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 24px;
-}
-
-.hero-meta-card {
-  padding: 18px;
-  border-radius: 20px;
-  background: rgba(251, 250, 245, 0.2);
-}
-
-.hero-meta-card span {
-  display: block;
-  color: rgba(247, 243, 233, 0.72);
-  font-size: 12px;
-}
-
-.hero-meta-card strong {
-  display: block;
+.detail-meta {
   margin-top: 10px;
-  color: #f7f4eb;
-  font-size: 24px;
 }
 
-.summary-panel,
-.reading-panel,
-.related-panel,
-.comment-panel,
-.sidebar-panel {
-  padding: 24px;
+.detail-meta svg {
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
 }
 
-.summary-panel {
-  display: grid;
-  grid-template-columns: auto 1px minmax(0, 1fr);
-  gap: 20px;
-  align-items: center;
-}
-
-.author-card {
+.detail-tags {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+/* --------------------------------------------------------------- summary */
+.author-row {
+  display: flex;
+  gap: 10px;
   align-items: center;
 }
 
 .author-avatar {
   display: grid;
-  width: 58px;
-  height: 58px;
+  flex: 0 0 auto;
   place-items: center;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #183f44, #7c6337);
-  color: #f7f4eb;
-  font-size: 24px;
+  background: var(--theme-color-bg);
+  color: var(--theme-color);
+  font-size: 17px;
   font-weight: 700;
-}
-
-.author-card h2 {
-  margin: 6px 0 0;
-  color: #152f35;
-  font-size: 24px;
-}
-
-.author-card span {
-  color: #6b767a;
-  font-size: 13px;
 }
 
 .author-copy {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
-.follow-button {
-  margin-left: 8px;
-  border-radius: 999px;
-  font-weight: 700;
+.author-copy strong {
+  display: block;
+  font-size: 15px;
 }
 
-.summary-divider {
-  width: 1px;
-  height: 100%;
-  background: rgba(56, 61, 64, 0.08);
-}
-
-.summary-grid {
-  display: grid;
+.summary-stats {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  margin-top: 12px;
 }
 
-.summary-grid article,
-.points-card,
-.stat-item {
-  padding: 18px;
-  border-radius: 20px;
-  background: linear-gradient(180deg, #f5efe0, #f8f6f0);
-}
-
-.summary-grid span,
-.points-card span,
-.stat-item span {
-  display: block;
-  color: #7a6b55;
-  font-size: 12px;
-}
-
-.summary-grid strong,
-.points-card strong,
-.stat-item strong {
-  display: block;
-  margin-top: 10px;
-  color: #152f35;
-  font-size: 28px;
-}
-
-.section-head h2,
-.sidebar-panel h2 {
-  margin: 12px 0 0;
-  color: #152f35;
-  font-size: 28px;
+/* ------------------------------------------------------------------- body */
+.skeleton-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .body-copy {
-  margin: 20px 0 0;
-  color: #4f5b60;
-  line-height: 1.95;
+  margin: 0;
+  color: var(--muted-color2);
+  font-size: 15px;
+  line-height: 1.75;
   white-space: pre-wrap;
 }
 
 .content-gallery {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 24px;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .content-gallery img {
   width: 100%;
-  min-height: 240px;
-  border-radius: 20px;
+  border-radius: var(--theme-border-radius-md);
   object-fit: cover;
 }
 
 .related-grid {
-  display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 22px;
 }
 
+/* --------------------------------------------------------------- comments */
 .comment-editor {
   display: grid;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 10px;
 }
 
 .comment-editor__actions {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
 }
 
-.comment-editor__hint,
-.gate-copy,
-.comment-item__time {
-  color: #6b767a;
+.comment-guest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--theme-border-radius-md);
+  background: var(--muted-bg-a-color);
+  color: var(--muted-color2);
   font-size: 13px;
 }
 
 .comment-loading {
-  padding: 12px 0 0;
+  padding-top: 12px;
 }
 
 .comment-list {
   display: grid;
-  gap: 14px;
-  margin-top: 20px;
+  gap: 10px;
 }
 
 .comment-item {
-  padding: 16px 18px;
-  border: 1px solid rgba(56, 61, 64, 0.08);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 12px;
+  border-radius: var(--theme-border-radius-md);
+  background: var(--muted-bg-a-color);
 }
 
 .comment-item__head {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 10px;
 }
 
 .comment-item__head strong {
   display: block;
-  color: #1d3b41;
+  font-size: 14px;
 }
 
 .comment-item__time {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .comment-item__content {
-  margin: 0;
-  color: #4f5b60;
-  line-height: 1.8;
+  margin: 6px 0 0;
+  color: var(--muted-color2);
+  font-size: 15px;
+  line-height: 1.75;
   white-space: pre-wrap;
 }
 
-.sidebar-panel--sticky {
-  position: sticky;
-  top: 108px;
-}
-
+/* ---------------------------------------------------------------- sidebar */
 .gate-status {
-  margin: 16px 0 0;
-  font-size: 28px;
-  font-weight: 700;
+  margin: 0;
+  padding: 8px 9px;
+  border-radius: var(--theme-border-radius-md);
+  background: var(--muted-bg-a-color);
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .gate-status--free {
-  color: #2b7d57;
+  color: var(--main-color);
 }
 
 .gate-status--unlocked {
-  color: #95611d;
+  color: var(--muted-color2);
 }
 
 .gate-status--locked {
-  color: #b34d35;
+  background: var(--theme-color-bg);
+  color: var(--theme-color);
 }
 
 .gate-status--muted {
-  color: #6b767a;
+  color: var(--muted-color);
 }
 
 .gate-copy {
-  margin: 12px 0 0;
-  line-height: 1.8;
+  margin: 8px 0 0;
+  color: var(--muted-color);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
-.points-card,
-.stats-grid {
-  margin-top: 18px;
+.points-item {
+  margin-top: 10px;
 }
 
-.unlock-button,
-.action-button {
-  width: 100%;
-  margin-top: 18px;
+.widget-btn,
+.widget-actions {
+  margin-top: 10px;
 }
 
-.stats-grid {
+.widget-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
-@media (max-width: 1180px) {
-  .detail-layout {
-    grid-template-columns: 1fr;
+@media (max-width: 991px) {
+  /* theme.css hides the shared rail here; this page keeps its access and
+     engagement controls reachable by stacking the rail under the article. */
+  .page-shell {
+    flex-direction: column;
+    gap: 15px;
   }
 
-  .sidebar-panel--sticky {
+  :deep(.ioui-aside) {
     position: static;
+    display: block;
+    flex: none;
+    order: 2;
+    width: 100%;
+    max-height: none;
   }
 
+  :deep(.content-wrap) {
+    order: 1;
+  }
+
+  .summary-stats,
   .related-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 820px) {
-  .detail-shell {
-    padding: 18px 12px 40px;
+@media (max-width: 767px) {
+  .detail-cover {
+    padding-bottom: 62%;
   }
 
-  .hero-cover-wrap {
-    min-height: 420px;
+  .detail-title {
+    font-size: 20px;
   }
 
-  .hero-body {
-    padding: 0 18px 18px;
-  }
-
-  .hero-topbar {
-    padding: 18px;
-  }
-
-  .hero-meta-grid,
-  .summary-panel,
-  .summary-grid,
-  .content-gallery,
+  .summary-stats,
   .related-grid,
-  .stats-grid {
-    grid-template-columns: 1fr;
+  .content-gallery {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 
-  .summary-panel {
-    gap: 18px;
+  .content-card {
+    padding: 14px;
   }
 
-  .summary-divider {
-    display: none;
-  }
-
-  .hero-topbar,
-  .section-head,
-  .comment-editor__actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .hero-topbar__meta {
-    justify-content: space-between;
-  }
-
-  .summary-panel,
-  .reading-panel,
-  .related-panel,
-  .comment-panel,
-  .sidebar-panel {
-    padding: 18px;
-    border-radius: 22px;
+  .detail-hero {
+    padding: 0;
   }
 }
 </style>

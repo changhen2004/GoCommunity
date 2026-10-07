@@ -25,6 +25,7 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       globals: true,
+      setupFiles: ['src/test/setup.ts'],
       server: {
         deps: {
           inline: ['element-plus'],
@@ -32,23 +33,11 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('element-plus')) {
-                return 'element-plus';
-              }
-              if (id.includes('vue-router') || id.includes('pinia') || id.includes('/vue/')) {
-                return 'vue-vendor';
-              }
-              if (id.includes('axios')) {
-                return 'http';
-              }
-            }
-          },
-        },
-      },
+      // No hand-rolled manualChunks: splitting element-plus from vue by path produced
+      // two chunks that import each other, and the shipped bundle died at load time
+      // with "Cannot access '<minified>' before initialization" (blank page).
+      // Rollup's own chunking keeps the module init order intact.
+      rollupOptions: {},
     },
     server: {
       proxy: {
