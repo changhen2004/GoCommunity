@@ -23,7 +23,7 @@ type amqpChannel interface {
 	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
 	QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
-	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	PublishConfirmed(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Close() error
 }
 
@@ -38,7 +38,7 @@ type Runner struct {
 }
 
 func NewRunner(conn *amqp.Connection, exchange, queue string, processor *Processor, idemStore IdempotencyStore) (*Runner, error) {
-	ch, err := conn.Channel()
+	ch, err := asyncjob.NewConfirmingChannel(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (w *Runner) handleProcessingFailure(ctx context.Context, msg amqp.Delivery,
 func (w *Runner) retryJob(ctx context.Context, msg amqp.Delivery) error {
 	headers := cloneHeaders(msg.Headers)
 	headers[RetryCountHeader] = int32(w.retryCount(msg.Headers) + 1)
-	return w.channel.PublishWithContext(ctx, w.exchange, w.queue, false, false, amqp.Publishing{
+	return w.channel.PublishConfirmed(ctx, w.exchange, w.queue, false, false, amqp.Publishing{
 		ContentType:  contentTypeOrDefault(msg.ContentType),
 		Body:         msg.Body,
 		Headers:      headers,
@@ -178,7 +178,7 @@ func (w *Runner) deadLetter(ctx context.Context, msg amqp.Delivery, reason strin
 	headers := cloneHeaders(msg.Headers)
 	headers[RetryCountHeader] = int32(w.retryCount(msg.Headers))
 	headers[FailureReasonHeader] = reason
-	return w.channel.PublishWithContext(ctx, w.exchange, w.effectiveFailedQueue(), false, false, amqp.Publishing{
+	return w.channel.PublishConfirmed(ctx, w.exchange, w.effectiveFailedQueue(), false, false, amqp.Publishing{
 		ContentType:  contentTypeOrDefault(msg.ContentType),
 		Body:         msg.Body,
 		Headers:      headers,

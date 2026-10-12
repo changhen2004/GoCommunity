@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -16,7 +17,8 @@ type publishedMessage struct {
 }
 
 type fakeWorkerChannel struct {
-	published []publishedMessage
+	published  []publishedMessage
+	publishErr error
 }
 
 func (c *fakeWorkerChannel) ExchangeDeclare(string, string, bool, bool, bool, bool, amqp.Table) error {
@@ -35,13 +37,13 @@ func (c *fakeWorkerChannel) Consume(string, string, bool, bool, bool, bool, amqp
 	return make(chan amqp.Delivery), nil
 }
 
-func (c *fakeWorkerChannel) PublishWithContext(_ context.Context, exchange, routingKey string, _ bool, _ bool, publishing amqp.Publishing) error {
+func (c *fakeWorkerChannel) PublishConfirmed(_ context.Context, exchange, routingKey string, _ bool, _ bool, publishing amqp.Publishing) error {
 	c.published = append(c.published, publishedMessage{
 		exchange:   exchange,
 		routingKey: routingKey,
 		publishing: publishing,
 	})
-	return nil
+	return c.publishErr
 }
 
 func (c *fakeWorkerChannel) Close() error {
@@ -165,6 +167,38 @@ func TestRunnerRetriesFailedJobBeforeDeadLetter(t *testing.T) {
 	}
 	if len(idemStore.released) != 1 || idemStore.released[0] != "job-1" {
 		t.Fatalf("expected processing idempotency lock released before retry, got %#v", idemStore.released)
+	}
+}
+
+func TestRunnerRequeuesOriginalWhenRetryIsNotConfirmed(t *testing.T) {
+	channel := &fakeWorkerChannel{publishErr: errors.New("broker nacked publication")}
+	runner := newTestRunner(channel)
+	msg := newTestDelivery(t, asyncjob.Job{ID: "job-1", Type: "unsupported"}, nil)
+
+	runner.handleDelivery(context.Background(), msg.Delivery)
+
+	if msg.acknowledger.acked {
+		t.Fatal("expected original message not acked before retry confirmation")
+	}
+	if !msg.acknowledger.nacked || !msg.acknowledger.requeued {
+		t.Fatal("expected original message requeued when retry is not confirmed")
+	}
+}
+
+func TestRunnerRequeuesOriginalWhenDeadLetterIsNotConfirmed(t *testing.T) {
+	channel := &fakeWorkerChannel{publishErr: errors.New("broker nacked publication")}
+	runner := newTestRunner(channel)
+	msg := newTestDelivery(t, asyncjob.Job{ID: "job-2", Type: "unsupported"}, amqp.Table{
+		RetryCountHeader: int32(3),
+	})
+
+	runner.handleDelivery(context.Background(), msg.Delivery)
+
+	if msg.acknowledger.acked {
+		t.Fatal("expected original message not acked before dead letter confirmation")
+	}
+	if !msg.acknowledger.nacked || !msg.acknowledger.requeued {
+		t.Fatal("expected original message requeued when dead letter is not confirmed")
 	}
 }
 

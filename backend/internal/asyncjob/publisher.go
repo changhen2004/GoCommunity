@@ -20,32 +20,43 @@ func (NoopPublisher) Publish(context.Context, Job) error {
 }
 
 type RabbitPublisher struct {
-	channel  *amqp.Channel
+	channel  publishingChannel
 	exchange string
 	queue    string
 }
 
+type publishingChannel interface {
+	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error
+	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
+	QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error
+	PublishConfirmed(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
+}
+
 func NewRabbitPublisher(conn *amqp.Connection, exchange, queue string) (*RabbitPublisher, error) {
-	ch, err := conn.Channel()
+	channel, err := NewConfirmingChannel(conn)
 	if err != nil {
 		return nil, err
 	}
+	return newRabbitPublisher(channel, exchange, queue)
+}
 
-	if err := ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
-		_ = ch.Close()
+func newRabbitPublisher(channel publishingChannel, exchange, queue string) (*RabbitPublisher, error) {
+	if err := channel.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
+		_ = channel.Close()
 		return nil, err
 	}
-	if _, err := ch.QueueDeclare(queue, true, false, false, false, nil); err != nil {
-		_ = ch.Close()
+	if _, err := channel.QueueDeclare(queue, true, false, false, false, nil); err != nil {
+		_ = channel.Close()
 		return nil, err
 	}
-	if err := ch.QueueBind(queue, queue, exchange, false, nil); err != nil {
-		_ = ch.Close()
+	if err := channel.QueueBind(queue, queue, exchange, false, nil); err != nil {
+		_ = channel.Close()
 		return nil, err
 	}
 
 	return &RabbitPublisher{
-		channel:  ch,
+		channel:  channel,
 		exchange: exchange,
 		queue:    queue,
 	}, nil
@@ -64,9 +75,10 @@ func (p *RabbitPublisher) Publish(ctx context.Context, job Job) error {
 		return err
 	}
 
-	return p.channel.PublishWithContext(ctx, p.exchange, p.queue, false, false, amqp.Publishing{
-		ContentType: "application/json",
-		Body:        body,
+	return p.channel.PublishConfirmed(ctx, p.exchange, p.queue, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		Body:         body,
+		DeliveryMode: amqp.Persistent,
 	})
 }
 
