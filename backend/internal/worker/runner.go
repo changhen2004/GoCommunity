@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"resource_community_go/internal/asyncjob"
 
@@ -112,17 +113,38 @@ func (w *Runner) handleDelivery(ctx context.Context, msg amqp.Delivery) {
 		return
 	}
 
-	ok, err := w.idemStore.Begin(ctx, job.ID)
+	result, err := w.idemStore.Begin(ctx, job.ID)
 	if err != nil {
 		log.Printf("idempotency begin failed: jobID=%s err=%v", job.ID, err)
 		_ = msg.Nack(false, true)
 		return
 	}
-	if !ok {
+
+	switch result {
+	case BeginDone:
 		_ = msg.Ack(false)
 		return
-	}
 
+	case BeginBusy:
+		// ponytail: local backoff pauses this Worker; use a delayed queue if contention affects throughput.
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+		}
+		_ = msg.Nack(false, true)
+		return
+
+	case BeginAcquired:
+
+	default:
+		log.Printf("unexpected begin result: jobID=%s result=%d", job.ID, result)
+		_ = msg.Nack(false, true)
+		return
+
+	}
 	if err := w.processor.Handle(ctx, job); err != nil {
 		log.Printf("process async job failed: type=%s err=%v", job.Type, err)
 		w.handleProcessingFailure(ctx, msg, job, err)

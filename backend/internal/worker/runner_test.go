@@ -6,7 +6,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 	"resource_community_go/internal/asyncjob"
 )
 
@@ -86,14 +88,11 @@ type fakeIdempotencyStore struct {
 	begun       []string
 	completed   []string
 	released    []string
-	beginResult bool
+	beginResult BeginResult
 }
 
-func (s *fakeIdempotencyStore) Begin(_ context.Context, jobID string) (bool, error) {
+func (s *fakeIdempotencyStore) Begin(_ context.Context, jobID string) (BeginResult, error) {
 	s.begun = append(s.begun, jobID)
-	if !s.beginResult {
-		return true, nil
-	}
 	return s.beginResult, nil
 }
 
@@ -115,7 +114,7 @@ func newTestRunner(channel *fakeWorkerChannel) *Runner {
 		failedQueue: "jobs.dlq",
 		maxRetries:  3,
 		processor:   NewProcessor(nil, nil),
-		idemStore:   &fakeIdempotencyStore{beginResult: true},
+		idemStore:   &fakeIdempotencyStore{beginResult: BeginAcquired},
 	}
 }
 
@@ -247,5 +246,73 @@ func TestRunnerDeadLettersInvalidPayload(t *testing.T) {
 	}
 	if msg.acknowledger.nacked {
 		t.Fatal("expected invalid payload not nacked after dlq publish")
+	}
+}
+
+func TestRunnerHandlesBeginStates(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		state    BeginResult
+		jobType  asyncjob.Type
+		wantAck  bool
+		wantNack bool
+		wantDone int
+	}{
+		{name: "busy", state: BeginBusy, jobType: "unsupported", wantNack: true},
+		{name: "done", state: BeginDone, jobType: "unsupported", wantAck: true},
+		{name: "acquired", state: BeginAcquired, jobType: asyncjob.TypeArticleViewed, wantAck: true, wantDone: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channel := &fakeWorkerChannel{}
+			runner := newTestRunner(channel)
+			store := &fakeIdempotencyStore{beginResult: tc.state}
+			runner.idemStore = store
+			msg := newTestDelivery(t, asyncjob.Job{ID: "job-state", Type: tc.jobType}, nil)
+
+			runner.handleDelivery(context.Background(), msg.Delivery)
+
+			if msg.acknowledger.acked != tc.wantAck || msg.acknowledger.nacked != tc.wantNack {
+				t.Fatalf("unexpected acknowledgement: ack=%v nack=%v", msg.acknowledger.acked, msg.acknowledger.nacked)
+			}
+			if tc.wantNack && !msg.acknowledger.requeued {
+				t.Fatal("expected busy job requeued")
+			}
+			if len(store.completed) != tc.wantDone || len(store.released) != 0 || len(channel.published) != 0 {
+				t.Fatalf("unexpected side effects: completed=%v released=%v published=%d", store.completed, store.released, len(channel.published))
+			}
+		})
+	}
+}
+
+type failingCompleteStore struct {
+	IdempotencyStore
+}
+
+func (failingCompleteStore) Complete(context.Context, string) error {
+	return errors.New("temporary Redis completion failure")
+}
+
+func TestRunnerRequeuesProcessingRedeliveryAfterCompletionFailure(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	store := NewRedisIdempotencyStore(client)
+	channel := &fakeWorkerChannel{}
+	runner := newTestRunner(channel)
+	runner.idemStore = failingCompleteStore{IdempotencyStore: store}
+	job := asyncjob.Job{ID: "job-completion-failure", Type: asyncjob.TypeArticleViewed}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		msg := newTestDelivery(t, job, nil)
+		runner.handleDelivery(context.Background(), msg.Delivery)
+		if msg.acknowledger.acked || !msg.acknowledger.nacked || !msg.acknowledger.requeued {
+			t.Fatalf("attempt %d: expected requeue without ack, got %+v", attempt, msg.acknowledger)
+		}
+	}
+	if value, err := mr.Get(store.prefix + job.ID); err != nil || value != "processing" {
+		t.Fatalf("expected processing state retained, got %q, err=%v", value, err)
+	}
+	if len(channel.published) != 0 {
+		t.Fatal("busy redelivery must not increment business retries or publish to the dead-letter queue")
 	}
 }

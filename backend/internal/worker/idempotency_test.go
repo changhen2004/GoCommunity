@@ -22,32 +22,41 @@ func TestRedisIdempotencyStoreSkipsDuplicateJob(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-123"
 
-	ok, err := store.Begin(ctx, jobID)
+	result, err := store.Begin(ctx, jobID)
 	if err != nil {
 		t.Fatalf("begin first job: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected first begin to acquire idempotency lock")
+	if result != BeginAcquired {
+		t.Fatalf("expected first begin to acquire job, got %d", result)
 	}
 
-	ok, err = store.Begin(ctx, jobID)
+	result, err = store.Begin(ctx, jobID)
 	if err != nil {
 		t.Fatalf("begin duplicate job: %v", err)
 	}
-	if ok {
-		t.Fatal("expected duplicate begin to be rejected")
+	if result != BeginBusy {
+		t.Fatalf("expected processing duplicate to be busy, got %d", result)
+	}
+	if ttl := mr.TTL(store.prefix + jobID); ttl != idempotencyProcessingTTL {
+		t.Fatalf("expected processing TTL %s, got %s", idempotencyProcessingTTL, ttl)
+	}
+	if other, err := store.Begin(ctx, "another-job"); err != nil || other != BeginAcquired {
+		t.Fatalf("expected a different job to acquire independently, got %d, err=%v", other, err)
 	}
 
 	if err := store.Complete(ctx, jobID); err != nil {
 		t.Fatalf("complete job: %v", err)
 	}
 
-	ok, err = store.Begin(ctx, jobID)
+	result, err = store.Begin(ctx, jobID)
 	if err != nil {
 		t.Fatalf("begin completed duplicate job: %v", err)
 	}
-	if ok {
-		t.Fatal("expected completed duplicate job to remain rejected")
+	if result != BeginDone {
+		t.Fatalf("expected completed duplicate to be done, got %d", result)
+	}
+	if ttl := mr.TTL(store.prefix + jobID); ttl != idempotencyDoneTTL {
+		t.Fatalf("expected done TTL %s, got %s", idempotencyDoneTTL, ttl)
 	}
 }
 
@@ -65,23 +74,23 @@ func TestRedisIdempotencyStoreReleaseAllowsRetry(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-retry"
 
-	ok, err := store.Begin(ctx, jobID)
+	result, err := store.Begin(ctx, jobID)
 	if err != nil {
 		t.Fatalf("begin job: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected first begin to acquire idempotency lock")
+	if result != BeginAcquired {
+		t.Fatalf("expected first begin to acquire job, got %d", result)
 	}
 
 	if err := store.Release(ctx, jobID); err != nil {
 		t.Fatalf("release job: %v", err)
 	}
 
-	ok, err = store.Begin(ctx, jobID)
+	result, err = store.Begin(ctx, jobID)
 	if err != nil {
 		t.Fatalf("begin released job: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected released processing lock to allow retry")
+	if result != BeginAcquired {
+		t.Fatalf("expected released job to acquire again, got %d", result)
 	}
 }
