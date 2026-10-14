@@ -12,7 +12,7 @@ import (
 const (
 	ArticleListPrefix      = "articles:list:"
 	ArticleDetailPrefix    = "articles:detail:"
-	ArticleHotPrefix       = "articles:hot:"
+	ArticleHotPrefix       = "articles:hot:cache:"
 	ArticleFollowingPrefix = "articles:following:"
 	ArticleHotZSetKey      = "articles:hot:zset"
 	PointsSummaryPrefix    = "points:summary:"
@@ -97,7 +97,8 @@ func DeleteByPrefix(ctx context.Context, redisDB *redis.Client, prefix string) {
 		ctx = context.Background()
 	}
 
-	iter := redisDB.Scan(ctx, 0, prefix+"*", 0).Iterator()
+	// COUNT reduces round trips in a large keyspace; invalidation still scans the keyspace.
+	iter := redisDB.Scan(ctx, 0, prefix+"*", 1000).Iterator()
 	keys := make([]string, 0)
 	for iter.Next(ctx) {
 		keys = append(keys, iter.Val())
