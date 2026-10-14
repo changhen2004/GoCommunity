@@ -28,6 +28,12 @@ func NewRepo(db *gorm.DB, redisDB *redis.Client) *Repo {
 	return &Repo{db: db, redisDB: redisDB}
 }
 
+// Redis 暴露底层 Redis 客户端，供 Service 构建分布式锁等跨实例协调能力。
+// Redis 未配置时返回 nil，调用方需做降级处理。
+func (r *Repo) Redis() *redis.Client {
+	return r.redisDB
+}
+
 func normalizeContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()

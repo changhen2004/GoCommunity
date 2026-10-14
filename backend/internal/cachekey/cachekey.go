@@ -19,10 +19,15 @@ const (
 	CacheNullValue         = "__NULL__"
 )
 
+// 分布式锁前缀独立于详情缓存前缀：避免被按前缀删除详情缓存的逻辑（SCAN + DEL）
+// 误删到锁 key。锁 key 与缓存的“失效即删”生命周期不同，必须隔离。
+const ArticleDetailLockPrefix = "locks:article:detail:"
+
 const (
 	ArticleListTTL       = 5 * time.Minute
 	ArticleDetailTTL     = 10 * time.Minute
 	ArticleDetailNullTTL = 30 * time.Second
+	ArticleDetailLockTTL = 30 * time.Second
 	ArticleHotTTL        = 3 * time.Minute
 	ArticleFollowingTTL  = 45 * time.Second
 	PointsSummaryTTL     = 2 * time.Minute
@@ -42,6 +47,11 @@ func ArticleListKey(page, pageSize int, sort, keyword, tag string) string {
 
 func ArticleDetailKey(articleID string) string {
 	return ArticleDetailPrefix + articleID
+}
+
+// ArticleDetailLockKey 热点详情跨实例回源合并用的分布式锁 key
+func ArticleDetailLockKey(articleID string) string {
+	return ArticleDetailLockPrefix + articleID
 }
 
 func ArticleHotKey(limit int) string {
