@@ -51,6 +51,9 @@ storage:
 	if cfg.Auth.JWTSecret != "secret" {
 		t.Fatalf("unexpected jwt secret: %s", cfg.Auth.JWTSecret)
 	}
+	if cfg.Worker.IdempotencyRedisDB != nil {
+		t.Fatal("worker idempotency DB should use the existing Redis client by default")
+	}
 
 	if cfg.Storage.UploadDir != "uploads" {
 		t.Fatalf("unexpected upload dir: %s", cfg.Storage.UploadDir)
@@ -83,6 +86,7 @@ storage:
 	t.Setenv("RESOURCE_COMMUNITY_GO_REDIS_ADDR", "redis:6379")
 	t.Setenv("RESOURCE_COMMUNITY_GO_REDIS_DB", "1")
 	t.Setenv("RESOURCE_COMMUNITY_GO_JWT_SECRET", "configured-test-secret")
+	t.Setenv("RESOURCE_COMMUNITY_GO_WORKER_IDEMPOTENCY_REDIS_DB", "1")
 
 	cfg, err := LoadConfig(tempDir)
 	if err != nil {
@@ -108,8 +112,22 @@ storage:
 	if cfg.Auth.JWTSecret != "configured-test-secret" {
 		t.Fatal("expected jwt secret environment override")
 	}
+	if cfg.Worker.IdempotencyRedisDB == nil || *cfg.Worker.IdempotencyRedisDB != 1 {
+		t.Fatal("expected worker idempotency DB override")
+	}
 
 	if cfg.Storage.UploadDir != "uploads" {
 		t.Fatalf("expected upload dir default, got: %s", cfg.Storage.UploadDir)
+	}
+}
+
+func TestLoadConfigRejectsNegativeIdempotencyDB(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "config.yaml"), []byte("app:\n  port: '3000'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RESOURCE_COMMUNITY_GO_WORKER_IDEMPOTENCY_REDIS_DB", "-1")
+	if _, err := LoadConfig(directory); err == nil {
+		t.Fatal("negative idempotency Redis DB must be rejected")
 	}
 }

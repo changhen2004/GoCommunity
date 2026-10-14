@@ -23,6 +23,9 @@ type Config struct {
 		Password string
 		DB       int
 	}
+	Worker struct {
+		IdempotencyRedisDB *int `mapstructure:"idempotency_redis_db"`
+	}
 	RabbitMQ struct {
 		URL      string
 		Exchange string
@@ -53,6 +56,7 @@ func LoadConfig(configDir string) (*Config, error) {
 	v.BindEnv("redis.addr", "RESOURCE_COMMUNITY_GO_REDIS_ADDR")
 	v.BindEnv("redis.password", "RESOURCE_COMMUNITY_GO_REDIS_PASSWORD")
 	v.BindEnv("redis.db", "RESOURCE_COMMUNITY_GO_REDIS_DB")
+	v.BindEnv("worker.idempotency_redis_db", "RESOURCE_COMMUNITY_GO_WORKER_IDEMPOTENCY_REDIS_DB")
 	v.BindEnv("rabbitmq.url", "RESOURCE_COMMUNITY_GO_RABBITMQ_URL")
 	v.BindEnv("rabbitmq.exchange", "RESOURCE_COMMUNITY_GO_RABBITMQ_EXCHANGE")
 	v.BindEnv("rabbitmq.queue", "RESOURCE_COMMUNITY_GO_RABBITMQ_QUEUE")
@@ -65,6 +69,9 @@ func LoadConfig(configDir string) (*Config, error) {
 	cfg := &Config{}
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if cfg.Worker.IdempotencyRedisDB != nil && *cfg.Worker.IdempotencyRedisDB < 0 {
+		return nil, fmt.Errorf("worker idempotency Redis DB must be non-negative")
 	}
 
 	if cfg.App.Port == "" {

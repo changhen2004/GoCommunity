@@ -24,6 +24,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("init redis: %v", err)
 	}
+	defer redisClient.Close()
+
+	idempotencyRedis := redisClient
+	if cfg.Worker.IdempotencyRedisDB != nil && *cfg.Worker.IdempotencyRedisDB != cfg.Redis.DB {
+		idempotencyConfig := *cfg
+		idempotencyConfig.Redis.DB = *cfg.Worker.IdempotencyRedisDB
+		idempotencyRedis, err = config.InitRedis(context.Background(), &idempotencyConfig)
+		if err != nil {
+			log.Fatalf("init idempotency redis: %v", err)
+		}
+		defer idempotencyRedis.Close()
+	}
 
 	rabbitConn, err := config.InitRabbitMQ(cfg)
 	if err != nil {
@@ -34,7 +46,7 @@ func main() {
 	pointsService := points.NewService(points.NewRepo(db, redisClient))
 	articleService := article.NewService(article.NewRepo(db, redisClient), nil, pointsService)
 	processor := internalWorker.NewProcessor(articleService, pointsService)
-	idemStore := internalWorker.NewRedisIdempotencyStore(redisClient)
+	idemStore := internalWorker.NewRedisIdempotencyStore(idempotencyRedis)
 
 	worker, err := internalWorker.NewRunner(rabbitConn, cfg.RabbitMQ.Exchange, cfg.RabbitMQ.Queue, processor, idemStore)
 	if err != nil {
