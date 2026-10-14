@@ -59,6 +59,11 @@ func newArticleDetailCacheTestStore(t *testing.T) (*gorm.DB, *redis.Client) {
 	if err := db.AutoMigrate(&auth.User{}, &Article{}, &ArticleUnlock{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sqlite connection: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 
 	redisServer := miniredis.RunT(t)
 	redisDB := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
