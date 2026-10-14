@@ -44,6 +44,10 @@ func NewRunner(conn *amqp.Connection, exchange, queue string, processor *Process
 		return nil, err
 	}
 
+	if err := ch.Qos(32, 0, false); err != nil {
+		_ = ch.Close()
+		return nil, err
+	}
 	if err := ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
 		_ = ch.Close()
 		return nil, err
