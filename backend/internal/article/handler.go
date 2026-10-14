@@ -86,7 +86,7 @@ func (h *Handler) GetArticles(ctx *gin.Context) {
 		ctx.Query("tag"),
 	)
 
-	resp, err := h.service.List(ctx, query)
+	resp, err := h.service.List(ctx.Request.Context(), query)
 	if err != nil {
 		writeError(ctx, http.StatusInternalServerError, 10005, err.Error(), "INTERNAL_ERROR")
 		return
@@ -96,7 +96,7 @@ func (h *Handler) GetArticles(ctx *gin.Context) {
 
 func (h *Handler) GetHotArticles(ctx *gin.Context) {
 	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
-	resp, err := h.service.ListHot(ctx, limit)
+	resp, err := h.service.ListHot(ctx.Request.Context(), limit)
 	if err != nil {
 		writeError(ctx, http.StatusInternalServerError, 10005, err.Error(), "INTERNAL_ERROR")
 		return
@@ -135,7 +135,7 @@ func (h *Handler) GetArticleByID(ctx *gin.Context) {
 }
 
 func (h *Handler) LikeArticle(ctx *gin.Context) {
-	resp, err := h.service.Like(ctx, ctx.Param("id"), ctx.GetUint("userID"))
+	resp, err := h.service.Like(ctx.Request.Context(), ctx.Param("id"), ctx.GetUint("userID"))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):
@@ -149,7 +149,7 @@ func (h *Handler) LikeArticle(ctx *gin.Context) {
 }
 
 func (h *Handler) UnlikeArticle(ctx *gin.Context) {
-	resp, err := h.service.Unlike(ctx, ctx.Param("id"), ctx.GetUint("userID"))
+	resp, err := h.service.Unlike(ctx.Request.Context(), ctx.Param("id"), ctx.GetUint("userID"))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):
@@ -163,7 +163,7 @@ func (h *Handler) UnlikeArticle(ctx *gin.Context) {
 }
 
 func (h *Handler) GetArticleLikes(ctx *gin.Context) {
-	resp, err := h.service.GetLikes(ctx, ctx.Param("id"))
+	resp, err := h.service.GetLikes(ctx.Request.Context(), ctx.Param("id"))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):
