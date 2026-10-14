@@ -16,7 +16,7 @@ type Config struct {
 		SlowRequestThresholdM int
 	}
 	Auth struct {
-		JWTSecret string
+		JWTSecret string `mapstructure:"jwt_secret"`
 	}
 	Redis struct {
 		Addr     string

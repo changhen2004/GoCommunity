@@ -82,6 +82,7 @@ storage:
 	t.Setenv("RESOURCE_COMMUNITY_GO_DATABASE_DSN", "root:root@tcp(mysql:3306)/resource_community_go?charset=utf8mb4&parseTime=True&loc=Local")
 	t.Setenv("RESOURCE_COMMUNITY_GO_REDIS_ADDR", "redis:6379")
 	t.Setenv("RESOURCE_COMMUNITY_GO_REDIS_DB", "1")
+	t.Setenv("RESOURCE_COMMUNITY_GO_JWT_SECRET", "configured-test-secret")
 
 	cfg, err := LoadConfig(tempDir)
 	if err != nil {
@@ -104,8 +105,8 @@ storage:
 		t.Fatalf("expected redis db override, got: %d", cfg.Redis.DB)
 	}
 
-	if cfg.Auth.JWTSecret != "secret" {
-		t.Fatalf("expected jwt secret default, got: %s", cfg.Auth.JWTSecret)
+	if cfg.Auth.JWTSecret != "configured-test-secret" {
+		t.Fatal("expected jwt secret environment override")
 	}
 
 	if cfg.Storage.UploadDir != "uploads" {
