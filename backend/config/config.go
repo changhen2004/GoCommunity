@@ -8,8 +8,9 @@ import (
 
 type Config struct {
 	App struct {
-		Name string
-		Port string
+		Name           string
+		Port           string
+		TrustedProxies string `mapstructure:"trusted_proxies"`
 	}
 	Observability struct {
 		EnablePprof           bool
@@ -49,6 +50,7 @@ func LoadConfig(configDir string) (*Config, error) {
 	v.SetDefault("observability.enable_pprof", false)
 	v.SetDefault("observability.slow_request_threshold_ms", 500)
 	v.BindEnv("app.port", "RESOURCE_COMMUNITY_GO_APP_PORT")
+	v.BindEnv("app.trusted_proxies", "RESOURCE_COMMUNITY_GO_TRUSTED_PROXIES")
 	v.BindEnv("observability.enable_pprof", "RESOURCE_COMMUNITY_GO_ENABLE_PPROF")
 	v.BindEnv("observability.slow_request_threshold_ms", "RESOURCE_COMMUNITY_GO_SLOW_REQUEST_THRESHOLD_MS")
 	v.BindEnv("auth.jwt_secret", "RESOURCE_COMMUNITY_GO_JWT_SECRET")

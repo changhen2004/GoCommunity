@@ -7,6 +7,7 @@ import (
 	"resource_community_go/internal/app"
 	"resource_community_go/internal/asyncjob"
 	"resource_community_go/utils"
+	"strings"
 	"time"
 )
 
@@ -55,6 +56,12 @@ func main() {
 		AsyncPublisher:       publisher,
 		SlowRequestThreshold: time.Duration(cfg.Observability.SlowRequestThresholdM) * time.Millisecond,
 	})
+	trustedProxies := strings.FieldsFunc(cfg.App.TrustedProxies, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		log.Fatalf("set trusted proxies: %v", err)
+	}
 
 	port := cfg.App.Port
 	if port == "" {
