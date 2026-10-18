@@ -1,0 +1,72 @@
+name: gocommunity-production
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.production
+    image: gocommunity-backend:${GOCOMMUNITY_IMAGE_TAG:-local}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      GIN_MODE: release
+    command: ["/usr/local/bin/api"]
+    ports:
+      - "127.0.0.1:18080:3000"
+    volumes:
+      - ./data/uploads:/app/uploads
+    networks:
+      - 1panel-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    mem_limit: 384m
+    cpus: 1.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  worker:
+    image: gocommunity-backend:${GOCOMMUNITY_IMAGE_TAG:-local}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    command: ["/usr/local/bin/worker"]
+    volumes:
+      - ./data/uploads:/app/uploads
+    networks:
+      - 1panel-network
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  1panel-network:
+    external: true
